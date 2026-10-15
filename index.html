@@ -11,8 +11,11 @@
     <div id="game-stage">
       <div id="ui">
         <div id="score">Score: 0</div>
+        <div id="stage-label">WAVE 1</div>
+        <div id="debug-label"></div>
+        <div id="powerup-label"></div>
         <div id="wave-status">
-          <span id="wave-label">WAVE READY</span>
+          <span id="wave-label">SHOCKWAVE READY</span>
           <span id="wave-countdown"></span>
         </div>
       </div>
@@ -24,7 +27,7 @@
           <p><strong>A</strong> — Rotate left</p>
           <p><strong>D</strong> — Rotate right</p>
           <p><strong>S</strong> — Reverse thrust</p>
-          <p><strong>Spacebar</strong> — Shoot</p>
+          <p><strong>Spacebar</strong> — Shoot, or fire a stored bomb</p>
           <p><strong>E</strong> — Shockwave</p>
           <p><strong>Mouse</strong> — Aim; distance from ship controls thrust</p>
           <p><strong>Left click (hold)</strong> — Fire</p>
@@ -33,7 +36,7 @@
         <div id="instructions-mobile" class="instructions hidden">
           <p>Drag <strong>joystick</strong> toward where you want to fly</p>
           <p>Pull opposite to your drift to slow down</p>
-          <p><strong>FIRE</strong> — Shoot &nbsp; <strong>WAVE</strong> — Shockwave</p>
+          <p><strong>FIRE</strong> — Shoot &nbsp; <strong>B</strong> — Bomb &nbsp; <strong>WAVE</strong> — Shockwave</p>
         </div>
         <p class="start-prompt start-prompt-desktop">Press <strong>SPACE</strong> to start</p>
         <p class="start-prompt start-prompt-mobile hidden">Tap screen to start</p>
@@ -48,6 +51,7 @@
         </div>
       </div>
       <div id="action-buttons">
+        <button id="bomb-btn" type="button" disabled>B</button>
         <button id="fire-btn" type="button">FIRE</button>
         <button id="wave-btn" type="button">WAVE</button>
       </div>

@@ -2,9 +2,9 @@
 
 ## About This Game
 
-**Retro Space Shooter** is a simple retro arcade-style space shooter inspired by classic vector arcade games like *Asteroids*.
+**Retro Space Shooter** is a retro arcade-style space shooter inspired by classic vector games like *Asteroids*.
 
-The game uses a black background and white line-art graphics for a clean, old-school arcade look. You control a triangular spaceship, shoot floating rocks, dodge a hunter UFO, avoid collisions, and try to earn the highest score you can.
+The game uses a black starfield and white line-art graphics. You fly a triangular ship, shoot rocks, dodge hunter UFOs and red clusters, collect pickups, and fight a boss on every 5th wave. You start with 3 lives. The top 5 scores stay saved in the browser.
 
 This project was built with AI assistance using [Cursor](https://cursor.com).
 
@@ -20,74 +20,65 @@ This project was built with AI assistance using [Cursor](https://cursor.com).
 | **A** | Rotate left |
 | **D** | Rotate right |
 | **S** | Reverse thrust / slow down |
-| **Spacebar** | Shoot (in game) / start or return to title (on title & game over screens) |
+| **Spacebar** | Shoot. On key press, also fires one stored bomb if you have one |
 | **E** | Shockwave |
-| **Mouse over canvas** | Ship rotates toward cursor; distance from ship controls thrust power |
+| **Mouse over canvas** | Ship rotates toward the cursor; distance from the ship controls thrust |
 | **Left click (hold)** | Fire |
 | **Right click** | Shockwave |
 
+On the title screen, **Space** starts the game. On the game over screen, **Space** returns to the title.
+
 ### Mobile
 
-- **Joystick** — drag toward where you want to fly; pull opposite to drift to slow down
+- **Joystick** — drag toward where you want to fly; pull opposite your drift to slow down
 - **FIRE** — shoot
+- **B** — fire one stored bomb (dim until you have a charge; shows **B2**, **B3**, and so on)
 - **WAVE** — shockwave
-- **Tap** title screen to start; **tap** game over screen to return to title
+- **Tap** the title screen to start; **tap** the game over screen to return to the title
 
-Use the **SFX ON / OFF** button in the top-right corner to mute or unmute sound.
+**SFX ON / OFF** sits at the bottom-right and mutes or unmutes sound.
 
-### Beta test (desktop)
+### Debug keys (desktop)
+
+These are for testing. They do nothing on the title screen or during game over, except **1**, which can start a boss test from the title.
 
 | Key | Action |
 |-----|--------|
-| **U** | Force-spawn a UFO for testing |
+| **U** | Force-spawn a UFO |
+| **B** | Add one bomb charge (does not fire it) |
+| **1** | Enter the wave 5 boss test in debug mode. The ship can still break, but it does not lose a life. Press **1** again to leave debug mode |
 
 ---
 
 ## Gameplay Features
 
-- **Black background with white retro vector style** — no image files; everything is drawn with Canvas line art
-- **Spaceship movement with inertia** — the ship drifts in space and does not stop instantly
-- **Shooting system** — fire bullets with Space (desktop) or FIRE (mobile)
-- **Rock spawning** — asteroids float around the screen; new waves spawn when all rocks are destroyed
-- **Rock splitting** — large rocks break into medium rocks, and medium rocks break into small rocks
-- **Rock-to-rock collisions** — rocks bounce off each other when they collide
-- **UFO hunter enemy** — a classic flying saucer that crosses the screen, chases you when you get close, and causes game over on contact
-- **Explosion particles** — white particle bursts when rocks or UFOs are destroyed
-- **Smoke trail particles** — small white dots trail behind the ship when thrusting
-- **Score system** — earn points for destroying rocks; UFOs are worth 500 points
-- **High score board** — top 5 scores are saved in your browser (`localStorage`)
-- **Game over screen** — shows your score, high scores, and restart instructions
-- **Ship destruction effect** — the ship breaks into 3 pieces on collision
-- **Title screen flow** — press **Space** (desktop) or tap (mobile) to start; return to title after game over
-- **Shockwave ability** — expanding dotted ring breaks rocks and destroys UFOs; **E** on desktop, **WAVE** button on mobile (5-second cooldown)
-- **Desktop + mobile layouts** — auto-detects device; desktop uses an 800×600 game box, mobile uses a touch controller panel
-- **Direction-based mobile joystick** — ship steers toward the joystick direction with inertia
-- **Delta time movement** — consistent gameplay speed across different frame rates and devices
-- **Retro arcade sound effects** — laser, explosions, thrust hum, shockwave, game over, and UFO sounds (Web Audio API, no external audio files)
+- **Full-window playfield** — desktop fills the browser window. The game stays 540 units tall, and the width follows the screen, so objects keep their size on a widescreen monitor. Mobile uses the top portion of the screen with the controls underneath
+- **Drifting starfield** — two layers of slow white dots. A star hides while it is inside a rock, UFO, cluster circle, boss circle, or the ship
+- **Inertia** — the ship drifts and does not stop instantly
+- **3 lives** — shown as small ships under the score. A hit breaks the ship into debris, then a new ship appears. Respawns avoid the center if something is already there
+- **Shooting** — Space or FIRE. Bullets wrap the screen until they expire
+- **Rocks** — large rocks split into medium, medium into small. Rocks bounce off each other and are pushed out of UFOs, clusters, and the boss
+- **Waves** — clearing the field starts the next wave. A title card (**WAVE N**) fades in above the ship before enemies appear. Clearing a wave scores a bonus, plus a clean bonus if the shockwave was not used
+- **Red clusters** — some large rocks hide a cluster of small red circles. Bullets peel the outer ring. The ship touching one costs a life. Destroying the last circle clears the cluster
+- **UFO hunter** — a green saucer that does not shoot. It patrols, chases when you are close, and steers around rocks and clusters. Contact costs a life unless a shield is up. From wave 5, up to two UFOs can be on screen. UFOs are worth 500 points
+- **Boss** — wave 5 and every 5th wave is **CRIMSON NUCLEUS**, a spinning red core with five outer shells. It chases slowly. Peel circles one at a time; the boss dies only when every core circle is gone. Under half core it stops, pulses five red rings, then regrows missing shell circles from the inside out. Later rebuilds wait until the outer shell is under half. After a boss, later waves add extra rocks and a little more rock speed
+- **Shockwave** — **E** or **WAVE**, with a 5-second cooldown. The label at the top-right reads **SHOCKWAVE READY**. The ring breaks rocks, destroys UFOs, and pops cluster and boss circles it touches. Firing it also slows the ship along the direction it is facing
+- **Pickups** — blue icons that drift until collected. At most 10 of each type can be on screen. Each one lasts 30 seconds, then blinks and fades over the last 8 seconds. Effects stay active together until their own timers end
+- **Score and high scores** — score at the top-left, wave at the top-center, active pickups in blue under the shockwave label. Top 5 scores are saved in `localStorage`
+- **Delta time** — movement and timers follow real time, so a 30 fps device and a 144 Hz monitor play at the same speed until a frame takes longer than 50 ms
+- **Sound** — Web Audio only (no audio files): lasers, explosions, thrust, shockwave, UFO hums, cluster pops, and bomb sounds. The UFO hum stops when the UFO leaves or is destroyed, and when the tab is hidden
 
----
+### Pickups
 
-## UFO Enemy
+| Pickup | Icon | Effect |
+|--------|------|--------|
+| **Rapid** | Blue diamond with **R** | 8 seconds of faster fire. Another rapid pickup adds 8 seconds |
+| **Triple** | Blue diamond with **3** | 8 seconds of three bullets per shot (one ahead, two angled out). Another triple pickup adds 8 seconds. With rapid fire, the three-bullet shot fires faster |
+| **Slow** | Blue circle with a dash | 8 seconds of slower ship speed. Another slow pickup sets the timer back to 8 seconds |
+| **Shield** | Blue circle with a plus | One charge. Touching a hazard pops the circles the shield touches, then the shield breaks, and you do not lose a life |
+| **Bomb** | Blue triangle | Adds one stored charge (they stack). It does not fire on pickup. Space or **B** launches one white triangle that wiggles, wraps the screen, and explodes on impact or after a set distance. The blue blast destroys rocks, UFOs, and whole clusters, and pops boss circles near the impact. The ship is shoved if the ring touches it |
 
-The UFO is a **hunter** — it does **not** shoot projectiles.
-
-| Behavior | Details |
-|----------|---------|
-| **Spawn** | One UFO at a time, entering from a random screen edge every 12–28 seconds |
-| **Patrol** | If you stay far away, it cruises straight across the play area and exits |
-| **Chase** | If you enter its detection range (~180 px), it locks on and pursues you |
-| **Rocks** | Rocks bounce off the UFO instead of breaking |
-| **Ship contact** | Game over |
-| **Destroyed by** | Bullets or shockwave (+500 score) |
-
-**UFO sounds**
-
-- **Appear** — short rising retro beep when it enters
-- **Patrol hum** — soft looping hum while cruising (stops on chase, removal, or game over)
-- **Chase hum** — faster, more urgent pulsing tone while hunting
-- **Destroyed** — distinct electronic zap (different from rock break sounds)
-
-Hum loops use persistent Web Audio nodes and only start/stop on state changes (not every frame). Audio respects the mute button and requires a user interaction to start (same as other SFX).
+Letters on pickups spin with the icon.
 
 ---
 
@@ -97,42 +88,28 @@ Hum loops use persistent Web Audio nodes and only start/stop on state changes (n
 
 - Created the first playable version
 - Added spaceship movement with inertia and drifting
-- Added shooting system
-- Added rock spawning
-- Added rock collision
-- Added rock splitting system
-- Added particle explosion when rocks break
-- Added smoke trail particles behind the spaceship
-- Added score system
-- Added game over and restart flow
-- Added retro arcade visual style
-- Added retro arcade sound effects
-- Added high score saving (top 5)
-- Added start screen
-- Added rock-to-rock bounce physics
-- Added ship break-apart effect on collision
-- Added progressive rock waves
+- Added shooting, rock spawning, rock splitting, and rock-to-rock bounce
+- Added explosions, smoke, score, high scores, and the title / game over flow
+- Added retro sound effects
 
 ### Version 2.0
 
-- Added desktop and mobile support with automatic layout detection
-- Added mobile Game Boy-style controller with joystick, **FIRE**, and **WAVE** buttons
-- Replaced mobile virtual key mapping with direction-based joystick steering
-- Added shockwave ability (**E** on desktop, **WAVE** on mobile) with 5-second cooldown
-- Added shockwave cooldown UI with greyed **WAVE READY** label and countdown timer
-- Updated title and game over flow — **Space** returns to title screen after game over
-- Restored desktop mode to a fixed 800×600 bordered game box
-- Added delta time updates so movement and effects stay consistent across 30, 60, and higher FPS
-- Increased overall sound volume for clearer retro SFX
+- Added desktop and mobile layouts, joystick steering, and the shockwave
+- Added mouse aim, thrust-by-distance, click-to-fire, and right-click shockwave
+- Added delta-time updates so speed stays consistent across frame rates
 
 ### Version 2.1
 
-- Added UFO hunter enemy (patrol, chase, rock bounce, collision game over)
-- Added classic flying saucer vector art (separate visual size and collision radius)
-- Added desktop mouse aim, thrust-by-distance, click-to-fire, and right-click shockwave
-- Added UFO sound effects: appear, patrol hum, chase hum, and destroyed zap
-- Added slower UFO cruise speed when not chasing
-- Added **U** key to force-spawn a UFO for beta testing
+- Added the UFO hunter, its sounds, and the **U** debug spawn
+
+### Version 3.0
+
+- Added 3 lives, ship debris, and safer respawns
+- Made the desktop playfield fill the window without stretching objects
+- Added the drifting starfield, red clusters, pickups, and the cluster bomb
+- Added wave title cards and the Crimson Nucleus boss on every 5th wave
+- Added the triple-shot pickup and the pickup limit, timer, and fade
+- Added debug keys **B** and **1**
 
 ---
 
@@ -141,20 +118,20 @@ Hum loops use persistent Web Audio nodes and only start/stop on state changes (n
 ### Option 1: Open directly in a browser
 
 1. Download or clone this project
-2. Open `index.html` in any modern web browser (Chrome, Firefox, Edge, Safari)
+2. Open `index.html` in a current browser (Chrome, Firefox, Edge, or Safari)
 
-No installation or build step is required.
+No install or build step is required.
 
 ### Option 2: Run a local server
 
-If you have Node.js installed (recommended):
+If you have Node.js installed:
 
 ```bash
 cd "Retro Asteroids Game"
 npx serve . -l tcp://0.0.0.0:8080
 ```
 
-Then open [http://localhost:8080](http://localhost:8080) in your browser.
+Then open [http://localhost:8080](http://localhost:8080).
 
 If you have Python installed:
 
@@ -167,13 +144,13 @@ Then open [http://localhost:8080](http://localhost:8080).
 
 > **Note:** Error `-102` / connection refused usually means the local server is not running. Start the server and keep the terminal open while you play.
 
-### Option 3: Publish with GitHub Pages
+### Option 3: GitHub Pages
 
 1. Push this project to a GitHub repository
 2. Go to **Settings → Pages**
 3. Set the source branch (usually `main`) and folder (`/root`)
 4. Save and wait for GitHub Pages to deploy
-5. Open the published URL in your browser
+5. Open the published URL
 
 ---
 
@@ -181,9 +158,9 @@ Then open [http://localhost:8080](http://localhost:8080).
 
 ```
 Retro Asteroids Game/
-├── index.html    # Main HTML page, canvas, and UI
-├── style.css     # UI and layout styles (desktop + mobile)
-├── game.js       # Game logic, physics, particles, UFO, and audio
+├── index.html    # Page, canvas, and on-screen controls
+├── style.css     # Layout for desktop and mobile
+├── game.js       # Game loop, enemies, pickups, boss, and audio
 └── README.md     # This file
 ```
 
@@ -191,10 +168,9 @@ Retro Asteroids Game/
 
 ## Future Ideas
 
-- Power-ups
-- Levels / boss fight
-- Online/global high score leaderboard
-- Additional enemy types
+- More boss types
+- Online high-score leaderboard
+- More enemy types
 
 ---
 

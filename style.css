@@ -22,10 +22,6 @@ body {
   align-items: center;
 }
 
-body.desktop-mode {
-  min-height: 100vh;
-}
-
 body.mobile-mode {
   align-items: stretch;
 }
@@ -37,12 +33,15 @@ body.mobile-mode {
 
 body.desktop-mode {
   min-height: 100vh;
-  overflow: auto;
+  overflow: hidden;
 }
 
-body.desktop-mode #game-container {
-  width: 800px;
-  height: 600px;
+body.desktop-mode #game-container,
+body.desktop-mode #game-stage,
+body.desktop-mode #game {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
 }
 
 body.mobile-mode #game-container {
@@ -58,11 +57,6 @@ body.mobile-mode #game-container {
   overflow: hidden;
 }
 
-body.desktop-mode #game-stage {
-  width: 800px;
-  height: 600px;
-}
-
 body.mobile-mode #game-stage {
   height: 66vh;
   height: 66dvh;
@@ -70,9 +64,7 @@ body.mobile-mode #game-stage {
 }
 
 body.desktop-mode #game {
-  width: 800px;
-  height: 600px;
-  border: 1px solid #333;
+  border: none;
   cursor: crosshair;
 }
 
@@ -88,8 +80,9 @@ body.mobile-mode #game {
 
 #ui {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 10;
   color: #fff;
   pointer-events: none;
@@ -101,14 +94,69 @@ body.mobile-mode #score {
 }
 
 #score {
+  position: absolute;
+  top: 10px;
+  left: 10px;
   font-size: 20px;
   letter-spacing: 2px;
 }
 
-#wave-status {
-  margin-top: 6px;
+#stage-label {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 20px;
+  letter-spacing: 2px;
+  color: #fff;
+}
+
+#debug-label {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  letter-spacing: 2px;
+  color: #ff3333;
+  white-space: nowrap;
+}
+
+#powerup-label {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  font-size: 16px;
+  letter-spacing: 2px;
+  color: #4da3ff;
+  text-align: right;
+  white-space: pre-line;
+  line-height: 1.35;
+}
+
+body.mobile-mode #stage-label {
+  font-size: 13px;
+}
+
+body.mobile-mode #debug-label {
+  top: 28px;
   font-size: 11px;
   letter-spacing: 1px;
+}
+
+body.mobile-mode #powerup-label {
+  top: 28px;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+#wave-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 16px;
+  letter-spacing: 2px;
+  text-align: right;
 }
 
 #wave-label {
@@ -125,12 +173,13 @@ body.mobile-mode #score {
 }
 
 body.mobile-mode #wave-status {
-  display: none;
+  font-size: 11px;
+  letter-spacing: 1px;
 }
 
 #mute-btn {
   position: absolute;
-  top: 10px;
+  bottom: 10px;
   right: 10px;
   z-index: 10;
   background: transparent;
@@ -322,6 +371,17 @@ body.mobile-mode #fire-btn {
   bottom: 6px;
 }
 
+body.mobile-mode #bomb-btn {
+  width: 48px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 0;
+  position: absolute;
+  right: 42px;
+  bottom: 90px;
+}
+
 body.mobile-mode #wave-btn {
   width: 54px;
   height: 54px;
@@ -337,7 +397,8 @@ body.mobile-mode #mobile-controls {
 }
 
 #wave-btn,
-#fire-btn {
+#fire-btn,
+#bomb-btn {
   width: 72px;
   height: 72px;
   border-radius: 50%;
@@ -368,14 +429,16 @@ body.mobile-mode #wave-btn.on-cooldown {
   color: #fff;
 }
 
-#fire-btn:disabled {
+#fire-btn:disabled,
+#bomb-btn:disabled {
   opacity: 0.35;
   border-color: #666;
   color: #666;
 }
 
 #wave-btn:not(.on-cooldown):active,
-#fire-btn:active {
+#fire-btn:active,
+#bomb-btn:not(:disabled):active {
   background: #fff;
   color: #000;
 }

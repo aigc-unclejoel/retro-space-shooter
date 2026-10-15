@@ -2,6 +2,9 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const scoreEl = document.getElementById("score");
+const stageLabelEl = document.getElementById("stage-label");
+const debugLabelEl = document.getElementById("debug-label");
+const powerupLabelEl = document.getElementById("powerup-label");
 const waveStatusEl = document.getElementById("wave-status");
 const waveLabelEl = document.getElementById("wave-label");
 const waveCountdownEl = document.getElementById("wave-countdown");
@@ -13,10 +16,9 @@ const instructionsMobile = document.getElementById("instructions-mobile");
 const startPromptDesktop = document.querySelector(".start-prompt-desktop");
 const startPromptMobile = document.querySelector(".start-prompt-mobile");
 
-let W = 800;
-let H = 600;
-const DESKTOP_W = 800;
-const DESKTOP_H = 600;
+let W = 960;
+let H = 540;
+const DESKTOP_H = 540;
 let inputMode = "desktop";
 
 // --- Game state ---
@@ -35,6 +37,43 @@ let rockCount = 4;
 let shipDebris = [];
 let shipBreakActive = false;
 let shipBreakTimer = 0;
+let pendingRespawn = false;
+let lives = 3;
+let bossDebug = false;
+let invincibleUntil = 0;
+let hitFlash = 0;
+let wave = 1;
+let shockwaveUsedThisWave = false;
+let waveBanner = 0;
+let waveBannerDuration = 1;
+let waveBannerText = "WAVE 1";
+let waveBannerSub = "";
+let pendingWaveEnemies = null;
+const BOSS_NAME = "CRIMSON NUCLEUS";
+let scorePopups = [];
+let clusters = [];
+let boss = null;
+let bossPulses = [];
+let rockSpeedBonus = 0;
+let pickups = [];
+let bombs = [];
+let bombWaves = [];
+let rapidTimer = 0;
+let tripleTimer = 0;
+let slowTimer = 0;
+let shieldCharges = 0;
+let bombCharges = 0;
+
+const START_LIVES = 3;
+const LIFE_BREAK_DURATION = 0.35;
+const INVINCIBLE_MS = 2000;
+const WAVE_CLEAR_BONUS = 100;
+const CLEAN_WAVE_BONUS = 150;
+const CLUSTER_SPAWN_CHANCE = 0.25;
+const CLUSTER_CIRCLE_R = 5.6;
+const CLUSTER_POP_SCORE = 20;
+const CLUSTER_CLEAR_SCORE = 200;
+const PICKUP_DURATION = 8;
 
 const HIGH_SCORE_KEY = "asteroidsHighScores";
 const MAX_HIGH_SCORES = 5;
@@ -85,6 +124,10 @@ let shockwaves = [];
 let shockwaveCooldownUntil = 0;
 const SHOCKWAVE_COOLDOWN = 5000;
 const SHOCKWAVE_EXPAND_SPEED = 4;
+const BOMB_SPEED = 4.2;
+const BOMB_RANGE = 760;
+const BOMB_WAVE_MAX = 210;
+const BOMB_WAVE_SPEED = 5.5;
 
 // --- UFO enemy (hunter — no shooting) ---
 const UFO_RADIUS = 22;
@@ -138,7 +181,7 @@ const sfx = {
   ufoChasePulseDepth: null,
   ufoChaseActive: false,
   muted: false,
-  volume: 0.6,
+  volume: 0.864,
   ready: false,
 };
 
@@ -188,7 +231,7 @@ function initUfoSoundNodes() {
   sfx.ufoPatrolPulse.type = "sine";
   sfx.ufoPatrolPulse.frequency.value = 2.2;
   sfx.ufoPatrolPulseDepth = ctx.createGain();
-  sfx.ufoPatrolPulseDepth.gain.value = 0.008;
+  sfx.ufoPatrolPulseDepth.gain.value = 0;
   sfx.ufoPatrolOsc.connect(sfx.ufoPatrolGain);
   sfx.ufoPatrolGain.connect(sfx.master);
   sfx.ufoPatrolPulse.connect(sfx.ufoPatrolPulseDepth);
@@ -205,7 +248,7 @@ function initUfoSoundNodes() {
   sfx.ufoChasePulse.type = "sine";
   sfx.ufoChasePulse.frequency.value = 7;
   sfx.ufoChasePulseDepth = ctx.createGain();
-  sfx.ufoChasePulseDepth.gain.value = 0.012;
+  sfx.ufoChasePulseDepth.gain.value = 0;
   sfx.ufoChaseOsc.connect(sfx.ufoChaseGain);
   sfx.ufoChaseGain.connect(sfx.master);
   sfx.ufoChasePulse.connect(sfx.ufoChasePulseDepth);
@@ -221,17 +264,19 @@ function playUfoAppearSfx() {
   if (!sfx.ready || sfx.muted) return;
   const ctx = sfx.ctx;
   const now = ctx.currentTime;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "square";
-  osc.frequency.setValueAtTime(220, now);
-  osc.frequency.exponentialRampToValueAtTime(880, now + 0.18);
-  gain.gain.setValueAtTime(0.08, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-  osc.connect(gain);
-  gain.connect(sfx.master);
-  osc.start(now);
-  osc.stop(now + 0.22);
+  [180, 360].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const start = now + i * 0.11;
+    osc.type = "square";
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.08, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.1);
+    osc.connect(gain);
+    gain.connect(sfx.master);
+    osc.start(start);
+    osc.stop(start + 0.12);
+  });
 }
 
 function playUfoDestroyedSound() {
@@ -266,12 +311,63 @@ function playUfoDestroyedSound() {
   playNoiseBurst(0.1, 0.07, 2600);
 }
 
+function playClusterPopSound() {
+  if (!sfx.ready || sfx.muted) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(660, now);
+  osc.frequency.exponentialRampToValueAtTime(220, now + 0.06);
+  gain.gain.setValueAtTime(0.07, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+  osc.connect(gain);
+  gain.connect(sfx.master);
+  osc.start(now);
+  osc.stop(now + 0.08);
+}
+
+function playClusterClearSound() {
+  if (!sfx.ready || sfx.muted) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+  [523, 784].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const start = now + i * 0.07;
+    osc.type = "square";
+    osc.frequency.setValueAtTime(freq, start);
+    gain.gain.setValueAtTime(0.09, start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.1);
+    osc.connect(gain);
+    gain.connect(sfx.master);
+    osc.start(start);
+    osc.stop(start + 0.11);
+  });
+}
+
+function attachUfoPulse(depth, gain) {
+  try { depth.disconnect(); } catch (err) { /* pulse was already disconnected */ }
+  depth.connect(gain.gain);
+}
+
+function muteUfoHum(gain, depth) {
+  if (!sfx.ctx || !gain || !depth) return;
+  const now = sfx.ctx.currentTime;
+  try { depth.disconnect(); } catch (err) { /* pulse was already disconnected */ }
+  depth.gain.cancelScheduledValues(now);
+  depth.gain.setValueAtTime(0, now);
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(0, now);
+}
+
 function startUfoPatrolHum() {
   if (!sfx.ready || sfx.muted || sfx.ufoPatrolActive) return;
   initUfoSoundNodes();
   stopUfoChaseHum();
-  const ctx = sfx.ctx;
-  const now = ctx.currentTime;
+  attachUfoPulse(sfx.ufoPatrolPulseDepth, sfx.ufoPatrolGain);
+  const now = sfx.ctx.currentTime;
   sfx.ufoPatrolPulseDepth.gain.setValueAtTime(0.008, now);
   sfx.ufoPatrolGain.gain.cancelScheduledValues(now);
   sfx.ufoPatrolGain.gain.setValueAtTime(0, now);
@@ -280,13 +376,8 @@ function startUfoPatrolHum() {
 }
 
 function stopUfoPatrolHum() {
-  if (!sfx.ready || !sfx.ufoPatrolActive) return;
-  const ctx = sfx.ctx;
-  const now = ctx.currentTime;
-  sfx.ufoPatrolGain.gain.cancelScheduledValues(now);
-  sfx.ufoPatrolGain.gain.setValueAtTime(sfx.ufoPatrolGain.gain.value, now);
-  sfx.ufoPatrolGain.gain.linearRampToValueAtTime(0, now + 0.2);
-  sfx.ufoPatrolPulseDepth.gain.setValueAtTime(0, now + 0.2);
+  if (!sfx.ready || !sfx.ufoPatrolGain) return;
+  muteUfoHum(sfx.ufoPatrolGain, sfx.ufoPatrolPulseDepth);
   sfx.ufoPatrolActive = false;
 }
 
@@ -294,8 +385,8 @@ function startUfoChaseHum() {
   if (!sfx.ready || sfx.muted || sfx.ufoChaseActive) return;
   initUfoSoundNodes();
   stopUfoPatrolHum();
-  const ctx = sfx.ctx;
-  const now = ctx.currentTime;
+  attachUfoPulse(sfx.ufoChasePulseDepth, sfx.ufoChaseGain);
+  const now = sfx.ctx.currentTime;
   sfx.ufoChasePulseDepth.gain.setValueAtTime(0.012, now);
   sfx.ufoChaseGain.gain.cancelScheduledValues(now);
   sfx.ufoChaseGain.gain.setValueAtTime(0, now);
@@ -304,13 +395,8 @@ function startUfoChaseHum() {
 }
 
 function stopUfoChaseHum() {
-  if (!sfx.ready || !sfx.ufoChaseActive) return;
-  const ctx = sfx.ctx;
-  const now = ctx.currentTime;
-  sfx.ufoChaseGain.gain.cancelScheduledValues(now);
-  sfx.ufoChaseGain.gain.setValueAtTime(sfx.ufoChaseGain.gain.value, now);
-  sfx.ufoChaseGain.gain.linearRampToValueAtTime(0, now + 0.2);
-  sfx.ufoChasePulseDepth.gain.setValueAtTime(0, now + 0.2);
+  if (!sfx.ready || !sfx.ufoChaseGain) return;
+  muteUfoHum(sfx.ufoChaseGain, sfx.ufoChasePulseDepth);
   sfx.ufoChaseActive = false;
 }
 
@@ -324,9 +410,8 @@ function setUfoAudioState(next) {
 }
 
 function stopAllUfoSounds() {
-  if (ufoAudioState === "none") return;
-  if (ufoAudioState === "patrol") stopUfoPatrolHum();
-  else if (ufoAudioState === "chase") stopUfoChaseHum();
+  stopUfoPatrolHum();
+  stopUfoChaseHum();
   ufoAudioState = "none";
 }
 
@@ -337,7 +422,28 @@ function beginUfoChase(ufo) {
 }
 
 function onUfoRemoved() {
+  if (ufos.length === 0) {
+    stopAllUfoSounds();
+    return;
+  }
+  if (ufos.some((ufo) => ufo.chasing)) setUfoAudioState("chase");
+  else setUfoAudioState("patrol");
+}
+
+function silenceGameAudio() {
+  if (!sfx.ready || !sfx.ctx) return;
+  const now = sfx.ctx.currentTime;
+  stopThrustSound();
   stopAllUfoSounds();
+  sfx.thrustActive = false;
+  sfx.ufoPatrolActive = false;
+  sfx.ufoChaseActive = false;
+  for (const node of [sfx.thrustGain, sfx.ufoPatrolGain, sfx.ufoChaseGain, sfx.ufoPatrolPulseDepth, sfx.ufoChasePulseDepth]) {
+    if (!node) continue;
+    node.gain.cancelScheduledValues(now);
+    node.gain.setValueAtTime(0, now);
+  }
+  if (sfx.ctx.state === "running") sfx.ctx.suspend();
 }
 
 function resumeAudio() {
@@ -488,6 +594,23 @@ function playStartSound() {
   });
 }
 
+function playBombLaunchSound() {
+  if (!sfx.ready || sfx.muted) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(140, now);
+  osc.frequency.exponentialRampToValueAtTime(70, now + 0.12);
+  gain.gain.setValueAtTime(0.08, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+  osc.connect(gain);
+  gain.connect(sfx.master);
+  osc.start(now);
+  osc.stop(now + 0.15);
+}
+
 function playShockwaveSound() {
   if (!sfx.ready || sfx.muted) return;
   const ctx = sfx.ctx;
@@ -520,6 +643,7 @@ function goToTitleScreen() {
   particles = [];
   shockwaves = [];
   resetUfoSpawning();
+  resetArcadeRun(false);
   screenShake = 0;
   for (const key in keys) keys[key] = false;
   ship.x = W / 2;
@@ -553,6 +677,10 @@ function resizeGame() {
   document.body.classList.toggle("mobile-mode", inputMode === "mobile");
   document.body.classList.toggle("desktop-mode", inputMode === "desktop");
 
+  const container = document.getElementById("game-container");
+  const stage = document.getElementById("game-stage");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
   if (inputMode === "mobile") {
     W = window.innerWidth;
     H = Math.floor(window.innerHeight * 0.66);
@@ -561,23 +689,43 @@ function resizeGame() {
     instructionsMobile.classList.remove("hidden");
     startPromptDesktop.classList.add("hidden");
     startPromptMobile.classList.remove("hidden");
+    container.style.width = "";
+    container.style.height = "";
+    stage.style.width = "";
+    stage.style.height = "";
+    canvas.style.width = "";
+    canvas.style.height = "";
   } else {
-    W = DESKTOP_W;
-    H = DESKTOP_H;
     mobileControls.classList.add("hidden");
     instructionsDesktop.classList.remove("hidden");
     instructionsMobile.classList.add("hidden");
     startPromptDesktop.classList.remove("hidden");
     startPromptMobile.classList.add("hidden");
+
+    const displayW = window.innerWidth;
+    const displayH = window.innerHeight;
+    container.style.width = displayW + "px";
+    container.style.height = displayH + "px";
+    stage.style.width = displayW + "px";
+    stage.style.height = displayH + "px";
+    canvas.style.width = displayW + "px";
+    canvas.style.height = displayH + "px";
+    canvas.width = Math.max(1, Math.round(displayW * dpr));
+    canvas.height = Math.max(1, Math.round(displayH * dpr));
+    H = DESKTOP_H;
+    W = H * (canvas.width / canvas.height);
   }
 
-  canvas.width = W;
-  canvas.height = H;
+  if (inputMode === "mobile") {
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+  }
 
   if (waitingToStart || gameOver) {
     ship.x = W / 2;
     ship.y = H / 2;
   }
+  createStarfield();
 }
 
 function resetJoystick() {
@@ -659,13 +807,13 @@ function updateMobileShip(dt) {
 
   if (!braking) {
     if (facingAlign > 0.6) {
-      const thrustStrength = power * facingAlign * ship.thrustPower * ts;
+      const thrustStrength = power * facingAlign * shipThrustPower() * ts;
       ship.vx += Math.cos(ship.angle) * thrustStrength;
       ship.vy += Math.sin(ship.angle) * thrustStrength;
       thrusting = true;
       startThrustSound();
     } else if (facingAlign > 0.15) {
-      const thrustStrength = power * facingAlign * ship.thrustPower * ts * 0.35;
+      const thrustStrength = power * facingAlign * shipThrustPower() * ts * 0.35;
       ship.vx += Math.cos(ship.angle) * thrustStrength;
       ship.vy += Math.sin(ship.angle) * thrustStrength;
       thrusting = true;
@@ -737,13 +885,13 @@ function updateDesktopMouseShip(dt) {
 
   if (!braking) {
     if (facingAlign > 0.6) {
-      const thrustStrength = power * facingAlign * ship.thrustPower * ts;
+      const thrustStrength = power * facingAlign * shipThrustPower() * ts;
       ship.vx += Math.cos(ship.angle) * thrustStrength;
       ship.vy += Math.sin(ship.angle) * thrustStrength;
       thrusting = true;
       startThrustSound();
     } else if (facingAlign > 0.15) {
-      const thrustStrength = power * facingAlign * ship.thrustPower * ts * 0.35;
+      const thrustStrength = power * facingAlign * shipThrustPower() * ts * 0.35;
       ship.vx += Math.cos(ship.angle) * thrustStrength;
       ship.vy += Math.sin(ship.angle) * thrustStrength;
       thrusting = true;
@@ -758,8 +906,8 @@ function updateDesktopMouseShip(dt) {
 
 function getCanvasMousePos(e) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
   return {
     x: (e.clientX - rect.left) * scaleX,
     y: (e.clientY - rect.top) * scaleY,
@@ -815,6 +963,7 @@ function setupMobileControls() {
   const knob = document.getElementById("joystick-knob");
   const fireBtn = document.getElementById("fire-btn");
   const waveBtn = document.getElementById("wave-btn");
+  const bombBtn = document.getElementById("bomb-btn");
 
   function getJoystickMaxRadius() {
     const baseRect = base.getBoundingClientRect();
@@ -903,6 +1052,12 @@ function setupMobileControls() {
     mobileInput.fire = false;
   });
 
+  bombBtn.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    if (waitingToStart || gameOver || shipBreakActive) return;
+    fireClusterBomb();
+  }, { passive: false });
+
   waveBtn.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (waitingToStart || gameOver || shipBreakActive) return;
@@ -937,7 +1092,7 @@ function updateWaveUI() {
 
   if (waveStatusEl) {
     waveStatusEl.classList.toggle("on-cooldown", !ready);
-    if (waveLabelEl) waveLabelEl.textContent = "WAVE READY";
+    if (waveLabelEl) waveLabelEl.textContent = "SHOCKWAVE READY";
     if (waveCountdownEl) {
       waveCountdownEl.textContent = ready ? "" : String(secondsLeft);
     }
@@ -954,11 +1109,23 @@ function updateWaveUI() {
   }
 }
 
+function dampShipOnShockwave() {
+  const hx = Math.cos(ship.angle);
+  const hy = Math.sin(ship.angle);
+  const forward = ship.vx * hx + ship.vy * hy;
+  const sideX = ship.vx - hx * forward;
+  const sideY = ship.vy - hy * forward;
+  ship.vx = hx * forward * 0.35 + sideX * 0.7;
+  ship.vy = hy * forward * 0.35 + sideY * 0.7;
+}
+
 function activateShockwave() {
   if (!isShockwaveReady()) return false;
   if (waitingToStart || gameOver || shipBreakActive) return false;
 
   shockwaveCooldownUntil = Date.now() + SHOCKWAVE_COOLDOWN;
+  shockwaveUsedThisWave = true;
+  dampShipOnShockwave();
   shockwaves.push({
     x: ship.x,
     y: ship.y,
@@ -1013,6 +1180,25 @@ function checkShockwaveRockCollisions(ts) {
         destroyUfo(k);
       }
     }
+
+    for (let c = clusters.length - 1; c >= 0; c--) {
+      const cluster = clusters[c];
+      for (let n = cluster.circles.length - 1; n >= 0; n--) {
+        const circle = cluster.circles[n];
+        if (wave.hitSet.has(circle)) continue;
+        const pos = circleWorldPos(cluster, circle);
+        const dist = distance(wave.x, wave.y, pos.x, pos.y);
+        const touches =
+          wave.radius >= dist - CLUSTER_CIRCLE_R &&
+          wave.radius <= dist + CLUSTER_CIRCLE_R + wave.speed * ts;
+        if (!touches) continue;
+        wave.hitSet.add(circle);
+        popClusterCircle(cluster, n, c);
+        if (clusters[c] !== cluster) break;
+      }
+    }
+
+    damageBossWithWave(wave, ts);
   }
 }
 
@@ -1034,6 +1220,7 @@ window.addEventListener("keydown", (e) => {
 
   if (waitingToStart) {
     if (e.code === "Space") beginGame();
+    if (e.code === "Digit1" && !e.repeat) startBossTest();
     return;
   }
 
@@ -1042,13 +1229,28 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (e.code === "Space" && !e.repeat && !shipBreakActive) {
+    fireClusterBomb();
+  }
+
   if (e.code === "KeyE" && !e.repeat && inputMode === "desktop") {
     activateShockwave();
     return;
   }
 
+  if (e.code === "Digit1" && !e.repeat) {
+    startBossTest();
+    return;
+  }
+
   if (e.code === "KeyU" && !e.repeat) {
     spawnUfo(true);
+    return;
+  }
+
+  if (e.code === "KeyB" && !e.repeat && !shipBreakActive) {
+    bombCharges += 1;
+    syncPowerupLabel();
     return;
   }
 
@@ -1113,20 +1315,187 @@ function addHighScore(newScore) {
   saveHighScores();
 }
 
-function triggerGameOver() {
-  createShipDebris();
-  shipBreakActive = true;
-  shipBreakTimer = 0;
-  stopAllUfoSounds();
-  playGameOverSound();
+function syncStageLabel() {
+  if (stageLabelEl) stageLabelEl.textContent = boss ? "W" + wave + " BOSS" : "WAVE " + wave;
+  if (debugLabelEl) debugLabelEl.textContent = bossDebug ? "Debug Mode" : "";
+}
+
+function syncPowerupLabel() {
+  if (!powerupLabelEl) return;
+  const lines = [];
+  if (rapidTimer > 0) lines.push("RAPID " + Math.ceil(rapidTimer) + "s");
+  if (tripleTimer > 0) lines.push("TRIPLE " + Math.ceil(tripleTimer) + "s");
+  if (slowTimer > 0) lines.push("SLOW " + Math.ceil(slowTimer) + "s");
+  if (shieldCharges > 0) lines.push("SHIELD");
+  if (bombCharges > 0) lines.push(bombCharges > 1 ? "BOMB " + bombCharges : "BOMB");
+  powerupLabelEl.textContent = lines.join("\n");
+  const bombBtn = document.getElementById("bomb-btn");
+  if (bombBtn) {
+    bombBtn.disabled = bombCharges <= 0;
+    bombBtn.textContent = bombCharges > 1 ? "B" + bombCharges : "B";
+  }
+}
+
+function addScore(points, x, y, label) {
+  score += points;
+  scoreEl.textContent = "Score: " + score;
+  scorePopups.push({
+    x,
+    y,
+    text: label || ("+" + points),
+    life: 1,
+  });
+}
+
+function shipCanBeHit() {
+  return !gameOver && !shipBreakActive && !waitingToStart && performance.now() >= invincibleUntil;
+}
+
+function nudgeShipFrom(ox, oy, minDist) {
+  let dx = ship.x - ox;
+  let dy = ship.y - oy;
+  let dist = Math.hypot(dx, dy);
+  if (dist >= minDist) return;
+  if (dist < 0.01) {
+    dx = Math.cos(ship.angle + Math.PI);
+    dy = Math.sin(ship.angle + Math.PI);
+    dist = 1;
+  }
+  const step = Math.min(minDist - dist, 2.2);
+  const nx = dx / dist;
+  const ny = dy / dist;
+  ship.x += nx * step;
+  ship.y += ny * step;
+  const into = ship.vx * nx + ship.vy * ny;
+  if (into < 0) {
+    ship.vx -= nx * into;
+    ship.vy -= ny * into;
+  }
+}
+
+function hazardClearance(x, y) {
+  let gap = Infinity;
+  for (const rock of rocks) {
+    gap = Math.min(gap, distance(x, y, rock.x, rock.y) - rock.radius);
+  }
+  for (const ufo of ufos) {
+    gap = Math.min(gap, distance(x, y, ufo.x, ufo.y) - ufo.radius);
+  }
+  for (const cluster of clusters) {
+    gap = Math.min(gap, distance(x, y, cluster.x, cluster.y) - cluster.radius);
+  }
+  if (boss) gap = Math.min(gap, distance(x, y, boss.x, boss.y) - boss.radius);
+  return gap;
+}
+
+function findRespawnPosition() {
+  const margin = 70;
+  const needed = ship.radius + 90;
+  const center = { x: W / 2, y: H / 2 };
+  if (hazardClearance(center.x, center.y) >= needed) return center;
+
+  let best = center;
+  let bestGap = hazardClearance(center.x, center.y);
+  for (let ring = 1; ring <= 7; ring++) {
+    const radius = ring * 55;
+    const steps = 10;
+    for (let i = 0; i < steps; i++) {
+      const angle = (i / steps) * Math.PI * 2;
+      const x = center.x + Math.cos(angle) * radius;
+      const y = center.y + Math.sin(angle) * radius * 0.72;
+      if (x < margin || x > W - margin || y < margin || y > H - margin) continue;
+      const gap = hazardClearance(x, y);
+      if (gap >= needed) return { x, y };
+      if (gap > bestGap) {
+        bestGap = gap;
+        best = { x, y };
+      }
+    }
+  }
+  return best;
+}
+
+function separateShipFromHazards() {
+  for (let pass = 0; pass < 3; pass++) {
+    for (const rock of rocks) {
+      nudgeShipFrom(rock.x, rock.y, rock.radius + ship.radius - 4);
+    }
+    for (const ufo of ufos) {
+      nudgeShipFrom(ufo.x, ufo.y, ufo.radius + ship.radius - 4);
+    }
+    for (const cluster of clusters) {
+      if (cluster.grace > 0) continue;
+      for (const circle of cluster.circles) {
+        const pos = circleWorldPos(cluster, circle);
+        nudgeShipFrom(pos.x, pos.y, CLUSTER_CIRCLE_R + ship.radius - 2);
+      }
+    }
+    if (boss) {
+      for (const circle of boss.circles) {
+        if (!bossCircleReady(circle)) continue;
+        const pos = circleWorldPos(boss, circle);
+        nudgeShipFrom(pos.x, pos.y, CLUSTER_CIRCLE_R + ship.radius - 2);
+      }
+    }
+  }
+  wrapPosition(ship);
+}
+
+function shipThrustPower() {
+  return ship.thrustPower * (slowTimer > 0 ? 0.58 : 1);
+}
+
+function shipMaxSpeed() {
+  return ship.maxSpeed * (slowTimer > 0 ? 0.62 : 1);
+}
+
+function clearRunHazards() {
   rocks = [];
   bullets = [];
   shockwaves = [];
+  clusters = [];
+  pickups = [];
+  bombs = [];
+  bombWaves = [];
+  boss = null;
+  bossPulses = [];
   ufos = [];
   ufoSpawnTimer = 0;
   ufoNextSpawn = rand(UFO_SPAWN_MIN, UFO_SPAWN_MAX);
+  stopAllUfoSounds();
+}
+
+function hurtShip() {
+  if (!shipCanBeHit()) return;
+
+  hitFlash = 1;
   screenShake = 12;
-  addExplosionParticles(ship.x, ship.y, 18);
+  addExplosionParticles(ship.x, ship.y, 12, "#fff");
+  addDestroyBurst(ship.x, ship.y, "#fff", 1.3);
+
+  if (shieldCharges > 0) {
+    shieldCharges = 0;
+    scorePopups.push({ x: ship.x, y: ship.y - 16, text: "SHIELD", life: 1 });
+    invincibleUntil = performance.now() + 700;
+    return;
+  }
+
+  if (!bossDebug) lives -= 1;
+  createShipDebris();
+  shipBreakActive = true;
+  shipBreakTimer = 0;
+  ship.vx = 0;
+  ship.vy = 0;
+  pendingRespawn = bossDebug || lives > 0;
+
+  if (!pendingRespawn) {
+    playGameOverSound();
+    clearRunHazards();
+  }
+}
+
+function triggerGameOver() {
+  hurtShip();
 }
 
 // --- Rock creation ---
@@ -1159,6 +1528,10 @@ function createRock(x, y, size, vx, vy) {
     rockVx = vel.vx;
     rockVy = vel.vy;
   }
+
+  const speedScale = rockSpeedScale();
+  rockVx *= speedScale;
+  rockVy *= speedScale;
 
   return {
     x,
@@ -1242,6 +1615,50 @@ function resolveRockCollisions() {
   }
 }
 
+function pushRockOutOf(rock, other, otherRadius) {
+  let dx = rock.x - other.x;
+  let dy = rock.y - other.y;
+  let dist = Math.hypot(dx, dy);
+  const minDist = rock.radius + otherRadius;
+  if (dist >= minDist) return;
+  if (dist < 0.01) {
+    const angle = rand(0, Math.PI * 2);
+    dx = Math.cos(angle);
+    dy = Math.sin(angle);
+    dist = 1;
+  }
+  const nx = dx / dist;
+  const ny = dy / dist;
+  rock.x += nx * (minDist - dist);
+  rock.y += ny * (minDist - dist);
+  const into = rock.vx * nx + rock.vy * ny;
+  if (into < 0) {
+    rock.vx -= nx * into;
+    rock.vy -= ny * into;
+  }
+}
+
+function separateRocksFromHazards() {
+  for (let pass = 0; pass < 3; pass++) {
+    for (const ufo of ufos) {
+      for (const rock of rocks) pushRockOutOf(rock, ufo, ufo.radius);
+    }
+    for (const cluster of clusters) {
+      for (const rock of rocks) pushRockOutOf(rock, cluster, cluster.radius);
+    }
+    if (boss) {
+      for (const rock of rocks) pushRockOutOf(rock, boss, boss.radius);
+    }
+    resolveRockCollisions();
+  }
+  for (const rock of rocks) wrapPosition(rock);
+}
+
+function rockSpeedScale() {
+  const steps = Math.max(0, wave - 4);
+  return Math.min(1.65, 1 + steps * 0.07 + rockSpeedBonus);
+}
+
 function spawnRocks(count) {
   const margin = Math.max(20, Math.min(50, W * 0.08));
   for (let i = 0; i < count; i++) {
@@ -1250,7 +1667,10 @@ function spawnRocks(count) {
       x = rand(margin, W - margin);
       y = rand(margin, H - margin);
     } while (distance(x, y, ship.x, ship.y) < 150);
-    rocks.push(createRock(x, y, "large"));
+    const rock = createRock(x, y, "large");
+    rock.hidesCluster = Math.random() < CLUSTER_SPAWN_CHANCE;
+    for (const wave of bombWaves) wave.hitSet.add(rock);
+    rocks.push(rock);
   }
 }
 
@@ -1260,9 +1680,89 @@ function spawnInitialRocks(count) {
   spawnRocks(count);
 }
 
+function awardWaveClear() {
+  addScore(WAVE_CLEAR_BONUS * wave, W / 2, H * 0.4);
+  if (!shockwaveUsedThisWave) {
+    addScore(CLEAN_WAVE_BONUS, W / 2, H * 0.4 + 26, "CLEAN +" + CLEAN_WAVE_BONUS);
+  }
+}
+
+function beginWaveIntro(title, sub, spawnKind) {
+  waveBannerText = title;
+  waveBannerSub = sub || "";
+  waveBannerDuration = 2.2;
+  waveBanner = waveBannerDuration;
+  pendingWaveEnemies = spawnKind;
+}
+
+function releasePendingWave() {
+  const kind = pendingWaveEnemies;
+  pendingWaveEnemies = null;
+  if (kind === "rocks") spawnRocks(rockCount);
+  else if (kind === "boss") spawnBoss();
+  else if (kind === "afterBoss") spawnNextWave();
+}
+
 function spawnNextWave() {
+  if (pendingWaveEnemies) return;
+  const clearedBossWave = wave % 5 === 0 && !boss;
+  awardWaveClear();
+  if (clearedBossWave) {
+    rockCount += 2;
+    rockSpeedBonus = Math.min(0.4, rockSpeedBonus + 0.05);
+  }
+  wave += 1;
   rockCount += 1;
-  spawnRocks(rockCount);
+  shockwaveUsedThisWave = false;
+  const bossWave = wave % 5 === 0;
+  beginWaveIntro(
+    bossWave ? "WAVE " + wave + " . BOSS" : "WAVE " + wave,
+    bossWave ? BOSS_NAME : "",
+    bossWave ? "boss" : "rocks"
+  );
+  syncStageLabel();
+}
+
+function resetArcadeRun(showBanner) {
+  lives = START_LIVES;
+  pendingRespawn = false;
+  invincibleUntil = 0;
+  hitFlash = 0;
+  wave = 1;
+  shockwaveUsedThisWave = false;
+  waveBannerText = "WAVE 1";
+  waveBannerSub = "";
+  waveBanner = 0;
+  waveBannerDuration = 1;
+  pendingWaveEnemies = null;
+  scorePopups = [];
+  clusters = [];
+  pickups = [];
+  bombs = [];
+  bombWaves = [];
+  boss = null;
+  bossPulses = [];
+  rockSpeedBonus = 0;
+  rapidTimer = 0;
+  tripleTimer = 0;
+  slowTimer = 0;
+  shieldCharges = 0;
+  bombCharges = 0;
+  bossDebug = false;
+  syncStageLabel();
+  syncPowerupLabel();
+}
+
+function ufoSpawnDelay() {
+  const steps = Math.min(6, Math.max(0, wave - 4));
+  return {
+    min: Math.max(6, UFO_SPAWN_MIN - steps),
+    max: Math.max(14, UFO_SPAWN_MAX - steps * 1.5),
+  };
+}
+
+function maxUfos() {
+  return wave >= 5 ? 2 : 1;
 }
 
 // --- UFO enemy ---
@@ -1274,14 +1774,14 @@ function resetUfoSpawning() {
 }
 
 function spawnUfo(force = false) {
-  if (!force && ufos.length > 0) return;
+  if (!force && ufos.length >= maxUfos()) return;
   if (force) {
     stopAllUfoSounds();
     ufos.length = 0;
   }
 
   const side = Math.floor(rand(0, 4));
-  const pad = UFO_RADIUS + 20;
+  const pad = UFO_RADIUS - 1;
   let x, y, vx, vy;
 
   // Enter from a random edge and cruise straight toward the opposite side.
@@ -1322,15 +1822,16 @@ function spawnUfo(force = false) {
   });
 
   playUfoAppearSfx();
-  setUfoAudioState("patrol");
+  if (!ufos.some((ufo) => ufo.chasing)) setUfoAudioState("patrol");
 }
 
 function updateUfoSpawning(dt) {
-  if (ufos.length > 0) return;
+  if (ufos.length >= maxUfos()) return;
   ufoSpawnTimer += dt;
   if (ufoSpawnTimer >= ufoNextSpawn) {
     ufoSpawnTimer = 0;
-    ufoNextSpawn = rand(UFO_SPAWN_MIN, UFO_SPAWN_MAX);
+    const delay = ufoSpawnDelay();
+    ufoNextSpawn = rand(delay.min, delay.max);
     spawnUfo();
   }
 }
@@ -1342,9 +1843,46 @@ function normalizeUfoSpeed(ufo) {
   ufo.vy = (ufo.vy / sp) * ufo.speed;
 }
 
+function steerUfoAroundHazards(ufo) {
+  let ax = 0;
+  let ay = 0;
+
+  for (const rock of rocks) {
+    const dx = ufo.x - rock.x;
+    const dy = ufo.y - rock.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const limit = rock.radius + ufo.radius + 48;
+    if (dist >= limit) continue;
+    const strength = (limit - dist) / limit;
+    ax += (dx / dist) * strength;
+    ay += (dy / dist) * strength;
+  }
+
+  for (const cluster of clusters) {
+    const dx = ufo.x - cluster.x;
+    const dy = ufo.y - cluster.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const limit = cluster.radius + ufo.radius + 40;
+    if (dist >= limit) continue;
+    const strength = (limit - dist) / limit;
+    ax += (dx / dist) * strength * 1.25;
+    ay += (dy / dist) * strength * 1.25;
+  }
+
+  if (ax === 0 && ay === 0) return;
+
+  const cruise = Math.sqrt(ufo.cruiseVx * ufo.cruiseVx + ufo.cruiseVy * ufo.cruiseVy) || UFO_CRUISE_SPEED;
+  const keepSpeed = ufo.chasing ? ufo.speed : cruise;
+  ufo.vx += ax * 2.2;
+  ufo.vy += ay * 2.2;
+  const sp = Math.sqrt(ufo.vx * ufo.vx + ufo.vy * ufo.vy);
+  if (sp === 0) return;
+  ufo.vx = (ufo.vx / sp) * keepSpeed;
+  ufo.vy = (ufo.vy / sp) * keepSpeed;
+}
+
 function isUfoOffScreen(ufo) {
-  const pad = ufo.radius + 50;
-  return ufo.x < -pad || ufo.x > W + pad || ufo.y < -pad || ufo.y > H + pad;
+  return ufo.x < -ufo.radius || ufo.x > W + ufo.radius || ufo.y < -ufo.radius || ufo.y > H + ufo.radius;
 }
 
 function resolveUfoRockCollisions() {
@@ -1386,8 +1924,19 @@ function updateUfos(dt) {
       ufo.vy = ufo.cruiseVy;
     }
 
+    steerUfoAroundHazards(ufo);
+
     ufo.x += ufo.vx * ts;
     ufo.y += ufo.vy * ts;
+
+    // Weave across the flight path like a cartoon saucer.
+    const travel = Math.atan2(ufo.vy, ufo.vx);
+    const side = travel + Math.PI / 2;
+    const wave = Math.cos(performance.now() * 0.004 + (ufo.bobPhase || 0)) * 0.9;
+    ufo.x += Math.cos(side) * wave * ts;
+    ufo.y += Math.sin(side) * wave * ts;
+
+    if (Math.random() < Math.min(0.9, 0.55 * ts)) addUfoSmoke(ufo);
 
     if (isUfoOffScreen(ufo)) {
       ufos.splice(i, 1);
@@ -1400,11 +1949,11 @@ function updateUfos(dt) {
 
 function destroyUfo(index) {
   const ufo = ufos[index];
-  score += UFO_SCORE;
-  scoreEl.textContent = "Score: " + score;
-  addExplosionParticles(ufo.x, ufo.y, 22);
+  addScore(UFO_SCORE, ufo.x, ufo.y);
+  addExplosionParticles(ufo.x, ufo.y, 22, "#33ff66");
+  addDestroyBurst(ufo.x, ufo.y, "#33ff66", 1.6);
   playUfoDestroyedSound();
-  screenShake = 10;
+  screenShake = 16;
   ufos.splice(index, 1);
   onUfoRemoved();
 }
@@ -1417,7 +1966,7 @@ function getUfoDrawScale(ufo) {
 }
 
 function drawUFO(renderCtx, ufo) {
-  const s = ufo.visualRadius || Math.max(getUfoDrawScale(ufo), 32);
+  const s = (ufo.visualRadius || Math.max(getUfoDrawScale(ufo), 32)) * 0.5;
 
   renderCtx.save();
   renderCtx.translate(ufo.x, ufo.y);
@@ -1425,58 +1974,50 @@ function drawUFO(renderCtx, ufo) {
   const bob = Math.sin(performance.now() * 0.004 + (ufo.bobPhase || 0)) * 1.2;
   renderCtx.translate(0, bob);
 
-  renderCtx.strokeStyle = "#ffffff";
+  renderCtx.strokeStyle = "#33ff66";
   renderCtx.lineWidth = 2;
   renderCtx.lineCap = "round";
   renderCtx.lineJoin = "round";
 
-  const rx = s;
-  const ry = s * 0.32;
-  const domeR = rx * 0.44;
-  const domeBaseY = -ry * 0.1;
+  const rx = s * 1.25;
+  const ry = s * 0.28;
+  const domeR = rx * 0.34;
+  const domeBaseY = -ry * 0.35;
 
-  // Main saucer body — wide ellipse
+  // Pointed saucer: top curve and bottom curve
   renderCtx.beginPath();
-  renderCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  renderCtx.moveTo(-rx, 0);
+  renderCtx.quadraticCurveTo(0, -ry, rx, 0);
+  renderCtx.stroke();
+  renderCtx.beginPath();
+  renderCtx.moveTo(-rx, 0);
+  renderCtx.quadraticCurveTo(0, ry * 0.72, rx, 0);
   renderCtx.stroke();
 
-  // Lower hull — weighted underside arc
-  renderCtx.beginPath();
-  renderCtx.moveTo(-rx * 0.86, ry * 0.4);
-  renderCtx.quadraticCurveTo(0, ry * 1.3, rx * 0.86, ry * 0.4);
-  renderCtx.stroke();
-
-  // Cockpit dome — centered semi-circle
+  // Dome sitting on the upper hull
   renderCtx.beginPath();
   renderCtx.arc(0, domeBaseY, domeR, Math.PI, 0);
   renderCtx.stroke();
 
-  // Antenna mast and ball tip
-  const domeTopY = domeBaseY - domeR;
-  const antennaTop = domeTopY - s * 0.22;
-  renderCtx.beginPath();
-  renderCtx.moveTo(0, domeTopY);
-  renderCtx.lineTo(0, antennaTop);
-  renderCtx.stroke();
-  renderCtx.beginPath();
-  renderCtx.arc(0, antennaTop - s * 0.04, s * 0.045, 0, Math.PI * 2);
-  renderCtx.stroke();
-
-  // Five portlights along a slight midsection curve
-  [-0.44, -0.22, 0, 0.22, 0.44].forEach((off, i) => {
-    const px = off * rx * 0.94;
-    const py = -ry * 0.06 + Math.pow(Math.abs(off), 1.6) * ry * 0.1;
-    const isCenter = i === 2;
+  // Three windows inside the dome
+  [-0.46, 0, 0.46].forEach((off) => {
     renderCtx.beginPath();
-    renderCtx.ellipse(
-      px,
-      py,
-      isCenter ? s * 0.055 : s * 0.065,
-      isCenter ? s * 0.055 : s * 0.038,
-      0,
-      0,
-      Math.PI * 2
-    );
+    renderCtx.ellipse(off * domeR, domeBaseY - domeR * 0.42, s * 0.055, s * 0.075, 0, 0, Math.PI * 2);
+    renderCtx.stroke();
+  });
+
+  // Two landing legs with oval feet
+  [-0.42, 0.42].forEach((off) => {
+    const x0 = off * rx;
+    const y0 = ry * 0.18;
+    const x1 = x0 + Math.sign(off) * s * 0.06;
+    const y1 = y0 + s * 0.32;
+    renderCtx.beginPath();
+    renderCtx.moveTo(x0, y0);
+    renderCtx.lineTo(x1, y1);
+    renderCtx.stroke();
+    renderCtx.beginPath();
+    renderCtx.ellipse(x1, y1 + s * 0.07, s * 0.04, s * 0.075, 0, 0, Math.PI * 2);
     renderCtx.stroke();
   });
 
@@ -1490,6 +2031,39 @@ function drawUfos() {
 }
 
 // --- Particles ---
+function addBombSmoke(bomb) {
+  const behind = bomb.angle + Math.PI;
+  const spread = rand(-0.25, 0.25);
+  const dist = rand(5, 9);
+  particles.push({
+    x: bomb.x + Math.cos(behind + spread) * dist,
+    y: bomb.y + Math.sin(behind + spread) * dist,
+    vx: Math.cos(behind) * rand(0.02, 0.08),
+    vy: Math.sin(behind) * rand(0.02, 0.08),
+    life: 1,
+    decay: rand(0.012, 0.02),
+    size: rand(1.3, 2.1),
+    type: "bombSmoke",
+  });
+}
+
+function addUfoSmoke(ufo) {
+  const travel = Math.atan2(ufo.vy, ufo.vx);
+  const behind = travel + Math.PI + rand(-0.4, 0.4);
+  const dist = ufo.radius + rand(14, 24);
+
+  particles.push({
+    x: ufo.x + Math.cos(behind) * dist,
+    y: ufo.y + Math.sin(behind) * dist,
+    vx: Math.cos(behind) * rand(0.15, 0.5),
+    vy: Math.sin(behind) * rand(0.15, 0.5),
+    life: 1,
+    decay: rand(0.025, 0.05),
+    size: rand(1, 2.2),
+    type: "smoke",
+  });
+}
+
 function addSmokeParticle() {
   const speed = shipSpeed();
   const behindAngle = ship.angle + Math.PI + rand(-0.4, 0.4);
@@ -1507,7 +2081,7 @@ function addSmokeParticle() {
   });
 }
 
-function addExplosionParticles(x, y, count) {
+function addExplosionParticles(x, y, count, color) {
   for (let i = 0; i < count; i++) {
     const angle = rand(0, Math.PI * 2);
     const speed = rand(1, 5);
@@ -1520,8 +2094,78 @@ function addExplosionParticles(x, y, count) {
       decay: rand(0.03, 0.06),
       size: rand(1.5, 3.5),
       type: "explosion",
+      color: color || "#fff",
     });
   }
+}
+
+function addSplashBurst(x, y, radius, count, color) {
+  for (let i = 0; i < count; i++) {
+    const angle = rand(0, Math.PI * 2);
+    const offset = rand(0, radius);
+    const speed = rand(0.8, 3.6);
+    particles.push({
+      x: x + Math.cos(angle) * offset,
+      y: y + Math.sin(angle) * offset,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed + rand(0.15, 0.7),
+      life: 1,
+      decay: rand(0.02, 0.045),
+      size: rand(1.1, 2.8),
+      type: "explosion",
+      color,
+    });
+  }
+}
+
+function addRockDotBurst(x, y, radius, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = rand(0, Math.PI * 2);
+    const offset = rand(0, radius * 0.9);
+    const speed = rand(0.4, 2.8);
+    particles.push({
+      x: x + Math.cos(angle) * offset,
+      y: y + Math.sin(angle) * offset,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: rand(0.018, 0.04),
+      size: rand(1.2, 2.6),
+      type: "explosion",
+      color: "#fff",
+    });
+  }
+}
+
+function addDestroyBurst(x, y, color, power) {
+  const sparks = Math.max(5, Math.round(8 * power));
+  for (let i = 0; i < sparks; i++) {
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(1.5, 4.5) * power;
+    particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: rand(0.035, 0.06),
+      len: rand(6, 14) * power,
+      type: "spark",
+      color,
+    });
+  }
+  particles.push({
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    radius: 3,
+    grow: 2.4 * power,
+    life: 1,
+    decay: 0.04,
+    type: "ring",
+    color,
+  });
 }
 
 function updateParticles(dt) {
@@ -1536,40 +2180,865 @@ function updateParticles(dt) {
       p.vx *= drag;
       p.vy *= drag;
     }
+    if (p.type === "ring") p.radius += p.grow * ts;
     if (p.life <= 0) particles.splice(i, 1);
   }
 }
 
 function drawParticles() {
   for (const p of particles) {
-    ctx.globalAlpha = p.life;
-    ctx.fillStyle = "#fff";
+    ctx.globalAlpha = Math.max(0, p.life);
+    const color = p.color || "#fff";
+    if (p.type === "ring") {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      continue;
+    }
+    if (p.type === "spark") {
+      const mag = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
+      const len = p.len * p.life;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - (p.vx / mag) * len, p.y - (p.vy / mag) * len);
+      ctx.stroke();
+      continue;
+    }
+    const age = Math.max(0, p.life);
+    const puff = p.type === "bombSmoke" ? age * age : age;
+    if (p.type === "bombSmoke") ctx.globalAlpha = age * 0.45;
+    ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.size * puff, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+
+// --- Circle cluster enemy ---
+function createCluster(x, y) {
+  const circles = [];
+  for (let i = 0; i < 8; i++) {
+    circles.push({ ring: 2, angle: (i / 8) * Math.PI * 2, r: 27.2 });
+  }
+  for (let i = 0; i < 5; i++) {
+    circles.push({ ring: 1, angle: (i / 5) * Math.PI * 2 + 0.3, r: 14.4 });
+  }
+  circles.push({ ring: 0, angle: 0, r: 0 });
+  return {
+    x,
+    y,
+    pushX: 0,
+    pushY: 0,
+    rot: rand(0, Math.PI * 2),
+    spin: 0.012,
+    circles,
+    radius: 27.2 + CLUSTER_CIRCLE_R,
+    grace: 0.7,
+  };
+}
+
+function clusterOuterRing(cluster) {
+  let ring = 0;
+  for (const circle of cluster.circles) {
+    if (circle.ring > ring) ring = circle.ring;
+  }
+  return ring;
+}
+
+function clusterSpeed(cluster) {
+  const ring = clusterOuterRing(cluster);
+  if (ring >= 2) return 0.85;
+  if (ring === 1) return 1.2;
+  return 1.55;
+}
+
+function circleWorldPos(cluster, circle) {
+  const angle = circle.angle + cluster.rot;
+  return {
+    x: cluster.x + Math.cos(angle) * circle.r,
+    y: cluster.y + Math.sin(angle) * circle.r,
+  };
+}
+
+function popClusterCircle(cluster, circleIndex, clusterIndex) {
+  const circle = cluster.circles[circleIndex];
+  const pos = circleWorldPos(cluster, circle);
+  const last = cluster.circles.length === 1;
+  cluster.circles.splice(circleIndex, 1);
+  addSplashBurst(pos.x, pos.y, CLUSTER_CIRCLE_R * 1.4, last ? 26 : 14, "#ff3333");
+  if (last) {
+    addScore(CLUSTER_CLEAR_SCORE, cluster.x, cluster.y);
+    playClusterClearSound();
+    screenShake = 8;
+    clusters.splice(clusterIndex, 1);
+  } else {
+    addScore(CLUSTER_POP_SCORE, cluster.x, cluster.y);
+    playClusterPopSound();
+  }
+}
+
+function pointSegmentDistance(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  let t = 0;
+  if (len2 > 0) {
+    t = ((px - x1) * dx + (py - y1) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+  }
+  const sx = x1 + dx * t;
+  const sy = y1 + dy * t;
+  return distance(px, py, sx, sy);
+}
+
+function bulletHitsCluster(bullet) {
+  const x1 = bullet.prevX != null ? bullet.prevX : bullet.x;
+  const y1 = bullet.prevY != null ? bullet.prevY : bullet.y;
+  const x2 = bullet.x;
+  const y2 = bullet.y;
+
+  for (let i = clusters.length - 1; i >= 0; i--) {
+    const cluster = clusters[i];
+    const ring = clusterOuterRing(cluster);
+    let bestIndex = -1;
+    let bestDist = Infinity;
+
+    for (let c = 0; c < cluster.circles.length; c++) {
+      const circle = cluster.circles[c];
+      if (circle.ring !== ring) continue;
+      const pos = circleWorldPos(cluster, circle);
+      const dist = pointSegmentDistance(pos.x, pos.y, x1, y1, x2, y2);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = c;
+      }
+    }
+
+    const crossedBody = pointSegmentDistance(cluster.x, cluster.y, x1, y1, x2, y2) <= cluster.radius + 4;
+    const hitCircle = bestIndex >= 0 && bestDist <= CLUSTER_CIRCLE_R + 8;
+    if ((hitCircle || crossedBody) && bestIndex >= 0) {
+      popClusterCircle(cluster, bestIndex, i);
+      return true;
+    }
+  }
+  return false;
+}
+
+function shipShieldRadius() {
+  return ship.radius + 8;
+}
+
+function shipHitsCluster(cluster) {
+  if (cluster.grace > 0) return false;
+  for (const circle of cluster.circles) {
+    const pos = circleWorldPos(cluster, circle);
+    if (distance(ship.x, ship.y, pos.x, pos.y) < CLUSTER_CIRCLE_R + ship.radius - 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function popCirclesTouchedByShield(cluster, clusterIndex) {
+  if (cluster.grace > 0 || shieldCharges <= 0) return false;
+  const ring = clusterOuterRing(cluster);
+  const reach = shipShieldRadius() + CLUSTER_CIRCLE_R;
+  const hits = [];
+  cluster.circles.forEach((circle, index) => {
+    if (circle.ring !== ring) return;
+    const pos = circleWorldPos(cluster, circle);
+    if (distance(ship.x, ship.y, pos.x, pos.y) < reach) hits.push(index);
+  });
+  if (hits.length === 0) return false;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    if (clusters[clusterIndex] !== cluster) break;
+    popClusterCircle(cluster, hits[i], clusterIndex);
+  }
+  return true;
+}
+
+function updateClusters(dt) {
+  const ts = timeScale(dt);
+  const decay = Math.pow(0.96, ts);
+  for (const cluster of clusters) {
+    if (cluster.grace > 0) cluster.grace -= dt;
+    cluster.rot += cluster.spin * ts;
+    cluster.pushX *= decay;
+    cluster.pushY *= decay;
+    const angle = Math.atan2(ship.y - cluster.y, ship.x - cluster.x);
+    const speed = clusterSpeed(cluster);
+    cluster.x += (Math.cos(angle) * speed + cluster.pushX) * ts;
+    cluster.y += (Math.sin(angle) * speed + cluster.pushY) * ts;
+    wrapPosition(cluster);
+  }
+}
+
+function drawClusters() {
+  ctx.strokeStyle = "#ff3333";
+  ctx.lineWidth = 2;
+  for (const cluster of clusters) {
+    for (const circle of cluster.circles) {
+      const pos = circleWorldPos(cluster, circle);
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, CLUSTER_CIRCLE_R, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+// --- Wave boss (same form for every 5th wave) ---
+const BOSS_SPEED = 0.32;
+const BOSS_SPIN = 0.008;
+const BOSS_BOMB_REACH = 58;
+
+function bossCircleReady(circle) {
+  return circle.alive && circle.appearDelay <= 0 && circle.grow > 0.2;
+}
+
+function createBoss(x, y) {
+  const circles = [];
+  const coreLayers = [
+    { ring: 0, count: 1, r: 0 },
+    { ring: 1, count: 5, r: 14.4 },
+    { ring: 2, count: 8, r: 27.2 },
+  ];
+  for (const layer of coreLayers) {
+    for (let i = 0; i < layer.count; i++) {
+      circles.push({
+        ring: layer.ring,
+        angle: (i / layer.count) * Math.PI * 2,
+        r: layer.r,
+        core: true,
+        alive: true,
+        grow: 1,
+        appearDelay: 0,
+      });
+    }
+  }
+  let outer = 27.2;
+  for (let layer = 0; layer < 5; layer++) {
+    const r = 40 + layer * 13;
+    outer = r;
+    const count = Math.max(12, Math.round((Math.PI * 2 * r) / 15));
+    for (let i = 0; i < count; i++) {
+      circles.push({
+        ring: 3 + layer,
+        angle: (i / count) * Math.PI * 2 + layer * 0.17,
+        r,
+        core: false,
+        alive: true,
+        grow: 1,
+        appearDelay: 0,
+      });
+    }
+  }
+  return {
+    x,
+    y,
+    rot: rand(0, Math.PI * 2),
+    radius: outer + CLUSTER_CIRCLE_R,
+    circles,
+    phase: "chase",
+    pulseTimer: 0,
+    pulsesLeft: 0,
+    needsRebuild: false,
+    rebuilds: 0,
+    coreTotal: 14,
+    shellTotal: circles.filter((circle) => !circle.core).length,
+  };
+}
+
+function spawnBoss() {
+  const side = Math.floor(rand(0, 4));
+  const pad = 110;
+  let x = rand(pad, W - pad);
+  let y = rand(pad, H - pad);
+  if (side === 0) y = -pad;
+  else if (side === 1) x = W + pad;
+  else if (side === 2) y = H + pad;
+  else x = -pad;
+  boss = createBoss(x, y);
+  bossPulses = [];
+  syncStageLabel();
+}
+
+function bossCoreAlive() {
+  let count = 0;
+  for (const circle of boss.circles) {
+    if (circle.core && circle.alive) count++;
+  }
+  return count;
+}
+
+function bossShellAlive() {
+  let count = 0;
+  for (const circle of boss.circles) {
+    if (!circle.core && circle.alive) count++;
+  }
+  return count;
+}
+
+function bossRebuildReady() {
+  if (boss.rebuilds < 1) return bossCoreAlive() < boss.coreTotal * 0.5;
+  return bossShellAlive() < boss.shellTotal * 0.5;
+}
+
+function randomPickupType() {
+  const types = ["rapid", "slow", "shield", "bomb", "triple"];
+  let type = types[Math.floor(Math.random() * types.length)];
+  if (wave % 5 === 0 && type === "bomb" && Math.random() < 0.7) {
+    type = ["rapid", "slow", "shield", "triple"][Math.floor(Math.random() * 4)];
+  }
+  return type;
+}
+
+const PICKUP_CAP = 10;
+const PICKUP_LIFETIME = 30;
+const PICKUP_FADE = 8;
+
+function pickupCount(type) {
+  let count = 0;
+  for (const item of pickups) {
+    if (item.type === type) count++;
+  }
+  return count;
+}
+
+function spawnPickup(x, y, type) {
+  if (pickupCount(type) >= PICKUP_CAP) return;
+  const vel = randomVelocity(0.3, 0.8);
+  pickups.push({
+    x,
+    y,
+    vx: vel.vx,
+    vy: vel.vy,
+    radius: 14,
+    spin: rand(0, Math.PI * 2),
+    type,
+    age: 0,
+  });
+}
+
+function pickupAlpha(item) {
+  const left = PICKUP_LIFETIME - item.age;
+  if (left >= PICKUP_FADE) return 1;
+  const fade = Math.max(0, left / PICKUP_FADE);
+  const blink = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(item.age * 16));
+  return fade * blink;
+}
+
+function dropBossPickup(x, y) {
+  if (Math.random() > 0.14) return;
+  spawnPickup(x, y, randomPickupType());
+}
+
+function defeatBoss() {
+  if (!boss) return;
+  addScore(1000, boss.x, boss.y, "BOSS +1000");
+  addSplashBurst(boss.x, boss.y, boss.radius * 0.45, 36, "#ff3333");
+  playClusterClearSound();
+  screenShake = 14;
+  boss = null;
+  bossPulses = [];
+  syncStageLabel();
+  beginWaveIntro("WAVE " + wave + " . BOSS", "DEFEATED", "afterBoss");
+}
+
+function popBossCircle(circle) {
+  if (!boss || !circle.alive) return;
+  const pos = circleWorldPos(boss, circle);
+  circle.alive = false;
+  circle.grow = 0;
+  circle.appearDelay = 0;
+  addSplashBurst(pos.x, pos.y, CLUSTER_CIRCLE_R * 1.3, circle.core ? 14 : 8, "#ff3333");
+  addScore(circle.core ? 40 : 20, pos.x, pos.y);
+  playClusterPopSound();
+  dropBossPickup(pos.x, pos.y);
+  if (!boss) return;
+  if (bossCoreAlive() === 0) {
+    defeatBoss();
+    return;
+  }
+  if (boss.phase === "chase" && bossRebuildReady()) {
+    boss.needsRebuild = true;
+  }
+}
+
+function beginBossFill() {
+  if (!boss) return;
+  boss.phase = "fill";
+  const missing = boss.circles.filter((circle) => !circle.core && !circle.alive);
+  missing.sort((a, b) => a.ring - b.ring || a.angle - b.angle);
+  let ringStart = 0;
+  let lastRing = -1;
+  let indexInRing = 0;
+  for (const circle of missing) {
+    if (circle.ring !== lastRing) {
+      if (lastRing !== -1) ringStart += 0.42;
+      lastRing = circle.ring;
+      indexInRing = 0;
+    }
+    circle.alive = true;
+    circle.grow = 0;
+    circle.appearDelay = ringStart + indexInRing * 0.028;
+    indexInRing++;
+  }
+}
+
+function updateBossPulses(dt) {
+  const ts = timeScale(dt);
+  for (let i = bossPulses.length - 1; i >= 0; i--) {
+    const pulse = bossPulses[i];
+    pulse.radius += pulse.speed * ts;
+    if (!pulse.pushedShip && !gameOver && !waitingToStart && !shipBreakActive) {
+      const dist = distance(pulse.x, pulse.y, ship.x, ship.y);
+      if (dist <= pulse.radius + ship.radius) {
+        pulse.pushedShip = true;
+        let dx = ship.x - pulse.x;
+        let dy = ship.y - pulse.y;
+        let len = Math.hypot(dx, dy);
+        if (len < 0.01) {
+          dx = Math.cos(ship.angle);
+          dy = Math.sin(ship.angle);
+          len = 1;
+        }
+        ship.x += (dx / len) * 36;
+        ship.y += (dy / len) * 36;
+        ship.vx += (dx / len) * 3.1;
+        ship.vy += (dy / len) * 3.1;
+        wrapPosition(ship);
+      }
+    }
+    if (pulse.radius >= pulse.maxRadius) bossPulses.splice(i, 1);
+  }
+}
+
+function updateBoss(dt) {
+  updateBossPulses(dt);
+  if (!boss) return;
+  const ts = timeScale(dt);
+
+  if (boss.phase === "chase") {
+    boss.rot += BOSS_SPIN * ts;
+    const angle = Math.atan2(ship.y - boss.y, ship.x - boss.x);
+    boss.x += Math.cos(angle) * BOSS_SPEED * ts;
+    boss.y += Math.sin(angle) * BOSS_SPEED * ts;
+    wrapPosition(boss);
+    if (boss.needsRebuild && bossRebuildReady()) {
+      boss.phase = "pulse";
+      boss.pulsesLeft = 5;
+      boss.pulseTimer = 0;
+      boss.needsRebuild = false;
+    }
+  } else if (boss.phase === "pulse") {
+    boss.pulseTimer += dt;
+    if (boss.pulseTimer >= 1) {
+      boss.pulseTimer -= 1;
+      bossPulses.push({
+        x: boss.x,
+        y: boss.y,
+        radius: 12,
+        maxRadius: 150,
+        speed: 4.2,
+        pushedShip: false,
+      });
+      boss.pulsesLeft--;
+      if (boss.pulsesLeft <= 0) beginBossFill();
+    }
+  } else if (boss.phase === "fill") {
+    let waiting = false;
+    for (const circle of boss.circles) {
+      if (!circle.alive || circle.grow >= 1) continue;
+      if (circle.appearDelay > 0) {
+        circle.appearDelay -= dt;
+        waiting = true;
+        continue;
+      }
+      circle.grow = Math.min(1, circle.grow + dt / 0.22);
+      if (circle.grow < 1) waiting = true;
+    }
+    if (!waiting) {
+      boss.phase = "chase";
+      boss.rebuilds += 1;
+      if (bossRebuildReady()) boss.needsRebuild = true;
+    }
+  }
+}
+
+function bulletHitsBoss(bullet) {
+  if (!boss) return false;
+  const x1 = bullet.prevX != null ? bullet.prevX : bullet.x;
+  const y1 = bullet.prevY != null ? bullet.prevY : bullet.y;
+  const x2 = bullet.x;
+  const y2 = bullet.y;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  let best = null;
+  let bestAlong = Infinity;
+
+  for (const circle of boss.circles) {
+    if (!bossCircleReady(circle)) continue;
+    const pos = circleWorldPos(boss, circle);
+    const dist = pointSegmentDistance(pos.x, pos.y, x1, y1, x2, y2);
+    if (dist > CLUSTER_CIRCLE_R + 2) continue;
+    let along = 0;
+    if (len2 > 0) along = ((pos.x - x1) * dx + (pos.y - y1) * dy) / len2;
+    if (along < bestAlong) {
+      bestAlong = along;
+      best = circle;
+    }
+  }
+
+  if (!best) return false;
+  popBossCircle(best);
+  return true;
+}
+
+function damageBossWithWave(wave, ts, reach) {
+  if (!boss) return;
+  const limit = reach == null ? Infinity : reach + CLUSTER_CIRCLE_R;
+  for (const circle of boss.circles) {
+    if (!bossCircleReady(circle) || wave.hitSet.has(circle)) continue;
+    const pos = circleWorldPos(boss, circle);
+    const dist = distance(wave.x, wave.y, pos.x, pos.y);
+    if (dist > limit) continue;
+    const touches = wave.radius >= dist - CLUSTER_CIRCLE_R && wave.radius <= dist + CLUSTER_CIRCLE_R + wave.speed * ts;
+    if (!touches) continue;
+    wave.hitSet.add(circle);
+    popBossCircle(circle);
+    if (!boss) return;
+  }
+}
+
+function shieldHitsBoss() {
+  if (!boss || shieldCharges <= 0) return false;
+  const reach = shipShieldRadius() + CLUSTER_CIRCLE_R;
+  const hits = [];
+  for (const circle of boss.circles) {
+    if (!bossCircleReady(circle)) continue;
+    const pos = circleWorldPos(boss, circle);
+    if (distance(ship.x, ship.y, pos.x, pos.y) < reach) hits.push(circle);
+  }
+  if (hits.length === 0) return false;
+  for (const circle of hits) {
+    popBossCircle(circle);
+    if (!boss) break;
+  }
+  return true;
+}
+
+function shipHitsBoss() {
+  if (!boss) return false;
+  for (const circle of boss.circles) {
+    if (!bossCircleReady(circle)) continue;
+    const pos = circleWorldPos(boss, circle);
+    if (distance(ship.x, ship.y, pos.x, pos.y) < CLUSTER_CIRCLE_R + ship.radius - 2) return true;
+  }
+  return false;
+}
+
+function drawBoss() {
+  for (const pulse of bossPulses) {
+    ctx.strokeStyle = "#ff3333";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = Math.max(0.3, 1 - pulse.radius / pulse.maxRadius);
+    ctx.beginPath();
+    ctx.arc(pulse.x, pulse.y, pulse.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (!boss) return;
+  ctx.save();
+  ctx.translate(boss.x, boss.y);
+  ctx.rotate(boss.rot);
+  ctx.lineWidth = 2;
+  for (const circle of boss.circles) {
+    if (!circle.alive || circle.appearDelay > 0 || circle.core) continue;
+    const scale = Math.max(0.05, circle.grow);
+    ctx.globalAlpha = 0.4 + 0.6 * circle.grow;
+    ctx.strokeStyle = circle.grow < 1 ? "#ff8888" : "#ff3333";
+    ctx.beginPath();
+    ctx.arc(Math.cos(circle.angle) * circle.r, Math.sin(circle.angle) * circle.r, CLUSTER_CIRCLE_R * scale, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#ff3333";
+  for (const circle of boss.circles) {
+    if (!circle.alive || circle.appearDelay > 0 || !circle.core) continue;
+    const scale = Math.max(0.05, circle.grow);
+    ctx.globalAlpha = 0.45 + 0.55 * circle.grow;
+    ctx.beginPath();
+    ctx.arc(Math.cos(circle.angle) * circle.r, Math.sin(circle.angle) * circle.r, CLUSTER_CIRCLE_R * scale, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// --- Pickups ---
+function maybeDropPickup(x, y) {
+  if (Math.random() > 0.3) return;
+  spawnPickup(x, y, randomPickupType());
+}
+
+function collectPickup() {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const item = pickups[i];
+    if (distance(ship.x, ship.y, item.x, item.y) > item.radius + ship.radius) continue;
+    pickups.splice(i, 1);
+    if (item.type === "shield") {
+      shieldCharges = 1;
+      scorePopups.push({ x: ship.x, y: ship.y - 18, text: "SHIELD", life: 1 });
+      continue;
+    }
+    if (item.type === "bomb") {
+      bombCharges += 1;
+      scorePopups.push({ x: ship.x, y: ship.y - 18, text: "BOMB", life: 1 });
+      continue;
+    }
+    if (item.type === "rapid") rapidTimer += PICKUP_DURATION;
+    else if (item.type === "triple") tripleTimer += PICKUP_DURATION;
+    else slowTimer = PICKUP_DURATION;
+    const pickupLabel = item.type === "rapid" ? "RAPID" : item.type === "triple" ? "TRIPLE" : "SLOW";
+    scorePopups.push({
+      x: ship.x,
+      y: ship.y - 18,
+      text: pickupLabel,
+      life: 1,
+    });
+  }
+}
+
+function updatePickup(dt) {
+  if (rapidTimer > 0) {
+    rapidTimer -= dt;
+    if (rapidTimer < 0) rapidTimer = 0;
+  }
+  if (tripleTimer > 0) {
+    tripleTimer -= dt;
+    if (tripleTimer < 0) tripleTimer = 0;
+  }
+  if (slowTimer > 0) {
+    slowTimer -= dt;
+    if (slowTimer < 0) slowTimer = 0;
+  }
+  const ts = timeScale(dt);
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const item = pickups[i];
+    item.age += dt;
+    if (item.age >= PICKUP_LIFETIME) {
+      pickups.splice(i, 1);
+      continue;
+    }
+    item.spin += 0.03 * ts;
+    item.x += item.vx * ts;
+    item.y += item.vy * ts;
+    wrapPosition(item);
+  }
+}
+
+function drawPickupIcon(type) {
+  ctx.beginPath();
+  if (type === "rapid" || type === "triple") {
+    ctx.moveTo(0, -11);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 11);
+    ctx.lineTo(-8, 0);
+    ctx.closePath();
+  } else if (type === "slow") {
+    ctx.arc(0, 0, 9, 0, Math.PI * 2);
+    ctx.moveTo(-4, 0);
+    ctx.lineTo(4, 0);
+  } else if (type === "bomb") {
+    ctx.moveTo(0, -11);
+    ctx.lineTo(9, 8);
+    ctx.lineTo(-9, 8);
+    ctx.closePath();
+  } else {
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.moveTo(-6, 0);
+    ctx.lineTo(6, 0);
+    ctx.moveTo(0, -6);
+    ctx.lineTo(0, 6);
+  }
+  ctx.stroke();
+}
+
+function drawPickup() {
+  ctx.strokeStyle = "#4da3ff";
+  ctx.lineWidth = 2;
+  for (const item of pickups) {
+    const alpha = pickupAlpha(item);
+    if (alpha <= 0.02) continue;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(item.x, item.y);
+    ctx.rotate(item.spin);
+    drawPickupIcon(item.type);
+    drawPickupLetter(item.type);
+    ctx.restore();
+  }
+}
+
+function updateScorePopups(dt) {
+  const ts = timeScale(dt);
+  for (const popup of scorePopups) {
+    popup.y -= 0.35 * ts;
+    popup.life -= 0.018 * ts;
+  }
+  scorePopups = scorePopups.filter((popup) => popup.life > 0);
+  if (waveBanner > 0) {
+    waveBanner -= dt;
+    if (waveBanner <= 0) {
+      waveBanner = 0;
+      releasePendingWave();
+    }
+  }
+}
+
+function drawScorePopups() {
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px Courier New";
+  for (const popup of scorePopups) {
+    ctx.globalAlpha = Math.max(0, popup.life);
+    ctx.fillText(popup.text, popup.x, popup.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+}
+
+function drawLives() {
+  if (waitingToStart || gameOver) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const scoreRect = scoreEl.getBoundingClientRect();
+  if (canvasRect.width < 1 || canvasRect.height < 1) return;
+  const toX = W / canvasRect.width;
+  const toY = H / canvasRect.height;
+  const iconH = Math.max(10, scoreRect.height * 0.72);
+  const iconW = iconH * 0.8;
+  const gap = 6;
+  const left = scoreRect.left - canvasRect.left;
+  const top = scoreRect.bottom - canvasRect.top + 6;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 1.5 * toY;
+  for (let i = 0; i < lives; i++) {
+    const x = (left + i * (iconW + gap) + iconW / 2) * toX;
+    const y = (top + iconH / 2) * toY;
+    const hw = (iconW / 2) * toX;
+    const hh = (iconH / 2) * toY;
+    ctx.beginPath();
+    ctx.moveTo(x, y - hh);
+    ctx.lineTo(x - hw, y + hh);
+    ctx.lineTo(x + hw, y + hh);
+    ctx.closePath();
+    ctx.stroke();
+  }
+}
+
+function startBossTest() {
+  if (gameOver) return;
+  if (bossDebug) {
+    bossDebug = false;
+    syncStageLabel();
+    return;
+  }
+  if (waitingToStart) beginGame();
+  rocks = [];
+  clusters = [];
+  bullets = [];
+  bombs = [];
+  bombWaves = [];
+  ufos = [];
+  stopAllUfoSounds();
+  boss = null;
+  bossPulses = [];
+  wave = 5;
+  shockwaveUsedThisWave = false;
+  bossDebug = true;
+  beginWaveIntro("WAVE " + wave + " . BOSS", BOSS_NAME, "boss");
+  syncStageLabel();
+}
+
+function drawWaveBanner() {
+  if (waveBanner <= 0 || waitingToStart) return;
+  ctx.save();
+  ctx.globalAlpha = waveBannerDuration > 0 ? Math.max(0, waveBanner / waveBannerDuration) : 0;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const textHalf = 24;
+  const subHalf = 12;
+  const shipTop = H / 2 - ship.radius;
+  const blockBelow = waveBannerSub ? 46 + subHalf : textHalf;
+  const titleY = Math.max(textHalf + 8, shipTop - 28 - blockBelow);
+  ctx.fillStyle = "#fff";
+  ctx.font = "46px Courier New";
+  if ("letterSpacing" in ctx) ctx.letterSpacing = "3px";
+  ctx.fillText(waveBannerText, W / 2, titleY);
+  if (waveBannerSub) {
+    ctx.fillStyle = "#ff3333";
+    ctx.font = "18px Courier New";
+    if ("letterSpacing" in ctx) ctx.letterSpacing = "7px";
+    ctx.fillText(waveBannerSub, W / 2, titleY + 46);
+  }
+  ctx.restore();
+}
+
+function drawHitFlash() {
+  if (hitFlash <= 0) return;
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fillRect(-10, -10, W + 20, H + 20);
+  hitFlash = 0;
 }
 
 // --- Bullets ---
 let lastShot = 0;
 const SHOT_COOLDOWN = 200;
 
-function shoot() {
-  const now = Date.now();
-  if (now - lastShot < SHOT_COOLDOWN) return;
-  lastShot = now;
+function drawPickupLetter(type) {
+  const letter = type === "rapid" ? "R" : type === "triple" ? "3" : "";
+  if (!letter) return;
+  ctx.fillStyle = "#4da3ff";
+  ctx.font = "bold 12px Courier New";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(letter, 0, 0);
+}
 
+function spawnBullet(spread) {
+  const angle = ship.angle + spread;
   const noseX = ship.x + Math.cos(ship.angle) * (ship.radius + 6);
   const noseY = ship.y + Math.sin(ship.angle) * (ship.radius + 6);
-
   bullets.push({
     x: noseX,
     y: noseY,
-    vx: Math.cos(ship.angle) * 10 + ship.vx * 0.5,
-    vy: Math.sin(ship.angle) * 10 + ship.vy * 0.5,
+    prevX: noseX,
+    prevY: noseY,
+    vx: Math.cos(angle) * 10 + ship.vx * 0.5,
+    vy: Math.sin(angle) * 10 + ship.vy * 0.5,
     life: 80,
   });
+}
+
+function shoot() {
+  const now = Date.now();
+  const cooldown = rapidTimer > 0 ? SHOT_COOLDOWN * 0.45 : SHOT_COOLDOWN;
+  if (now - lastShot < cooldown) return;
+  lastShot = now;
+
+  if (tripleTimer > 0) {
+    spawnBullet(-0.16);
+    spawnBullet(0);
+    spawnBullet(0.16);
+  } else {
+    spawnBullet(0);
+  }
   playLaserSound();
 }
 
@@ -1577,6 +3046,8 @@ function updateBullets(dt) {
   const ts = timeScale(dt);
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
+    b.prevX = b.x;
+    b.prevY = b.y;
     b.x += b.vx * ts;
     b.y += b.vy * ts;
     b.life -= ts;
@@ -1584,6 +3055,204 @@ function updateBullets(dt) {
       bullets.splice(i, 1);
     }
   }
+}
+
+function fireClusterBomb() {
+  if (bombCharges <= 0) return false;
+  if (waitingToStart || gameOver || shipBreakActive) return false;
+  bombCharges -= 1;
+  launchClusterBomb();
+  return true;
+}
+
+function launchClusterBomb() {
+  const angle = ship.angle;
+  const x = ship.x + Math.cos(angle) * (ship.radius + 12);
+  const y = ship.y + Math.sin(angle) * (ship.radius + 12);
+  bombs.push({
+    x,
+    y,
+    angle,
+    speed: BOMB_SPEED,
+    wiggle: rand(0, Math.PI * 2),
+    traveled: 0,
+    radius: 7,
+  });
+  playBombLaunchSound();
+}
+
+function bombHitsObject(bomb) {
+  for (const rock of rocks) {
+    if (distance(bomb.x, bomb.y, rock.x, rock.y) < rock.radius + bomb.radius) return true;
+  }
+  for (const ufo of ufos) {
+    if (distance(bomb.x, bomb.y, ufo.x, ufo.y) < ufo.radius + bomb.radius) return true;
+  }
+  for (const cluster of clusters) {
+    for (const circle of cluster.circles) {
+      const pos = circleWorldPos(cluster, circle);
+      if (distance(bomb.x, bomb.y, pos.x, pos.y) < CLUSTER_CIRCLE_R + bomb.radius) return true;
+    }
+  }
+  if (boss) {
+    for (const circle of boss.circles) {
+      if (!bossCircleReady(circle)) continue;
+      const pos = circleWorldPos(boss, circle);
+      if (distance(bomb.x, bomb.y, pos.x, pos.y) < CLUSTER_CIRCLE_R + bomb.radius) return true;
+    }
+  }
+  return false;
+}
+
+function detonateBomb(bomb) {
+  bombWaves.push({
+    x: bomb.x,
+    y: bomb.y,
+    radius: 6,
+    maxRadius: BOMB_WAVE_MAX,
+    speed: BOMB_WAVE_SPEED,
+    hitSet: new WeakSet(),
+  });
+  screenShake = 10;
+  playShockwaveSound();
+}
+
+function destroyClusterAt(index) {
+  const cluster = clusters[index];
+  addSplashBurst(cluster.x, cluster.y, cluster.radius, 30, "#ff3333");
+  addScore(CLUSTER_CLEAR_SCORE, cluster.x, cluster.y);
+  playClusterClearSound();
+  clusters.splice(index, 1);
+}
+
+function pushShipFromBombWave(wave) {
+  if (wave.pushedShip || gameOver || waitingToStart || shipBreakActive) return;
+  const dist = distance(wave.x, wave.y, ship.x, ship.y);
+  const touches = dist <= wave.radius + ship.radius;
+  if (!touches) return;
+  wave.pushedShip = true;
+  let dx = ship.x - wave.x;
+  let dy = ship.y - wave.y;
+  let len = Math.hypot(dx, dy);
+  if (len < 0.01) {
+    dx = Math.cos(ship.angle);
+    dy = Math.sin(ship.angle);
+    len = 1;
+  }
+  const nx = dx / len;
+  const ny = dy / len;
+  ship.x += nx * 52;
+  ship.y += ny * 52;
+  ship.vx += nx * 4.6;
+  ship.vy += ny * 4.6;
+  wrapPosition(ship);
+}
+
+function applyBombWave(wave, ts) {
+  pushShipFromBombWave(wave);
+  damageBossWithWave(wave, ts, BOSS_BOMB_REACH);
+  for (let j = rocks.length - 1; j >= 0; j--) {
+    const rock = rocks[j];
+    if (wave.hitSet.has(rock)) continue;
+    const dist = distance(wave.x, wave.y, rock.x, rock.y);
+    const touches =
+      wave.radius >= dist - rock.radius &&
+      wave.radius <= dist + rock.radius + wave.speed * ts;
+    if (!touches) continue;
+    wave.hitSet.add(rock);
+    breakRock(rock, j);
+  }
+
+  for (let k = ufos.length - 1; k >= 0; k--) {
+    const ufo = ufos[k];
+    if (wave.hitSet.has(ufo)) continue;
+    const dist = distance(wave.x, wave.y, ufo.x, ufo.y);
+    const touches =
+      wave.radius >= dist - ufo.radius &&
+      wave.radius <= dist + ufo.radius + wave.speed * ts;
+    if (!touches) continue;
+    wave.hitSet.add(ufo);
+    destroyUfo(k);
+  }
+
+  for (let c = clusters.length - 1; c >= 0; c--) {
+    const cluster = clusters[c];
+    if (wave.hitSet.has(cluster)) continue;
+    let touches = wave.radius >= distance(wave.x, wave.y, cluster.x, cluster.y) - cluster.radius
+      && wave.radius <= distance(wave.x, wave.y, cluster.x, cluster.y) + cluster.radius + wave.speed * ts;
+    if (!touches) {
+      for (const circle of cluster.circles) {
+        const pos = circleWorldPos(cluster, circle);
+        const dist = distance(wave.x, wave.y, pos.x, pos.y);
+        if (wave.radius >= dist - CLUSTER_CIRCLE_R && wave.radius <= dist + CLUSTER_CIRCLE_R + wave.speed * ts) {
+          touches = true;
+          break;
+        }
+      }
+    }
+    if (!touches) continue;
+    wave.hitSet.add(cluster);
+    destroyClusterAt(c);
+  }
+}
+
+function updateBombs(dt) {
+  const ts = timeScale(dt);
+  for (let i = bombs.length - 1; i >= 0; i--) {
+    const bomb = bombs[i];
+    bomb.wiggle += 0.22 * ts;
+    const side = bomb.angle + Math.PI / 2;
+    const wobble = Math.sin(bomb.wiggle) * 1.7;
+    const step = bomb.speed * ts;
+    bomb.x += (Math.cos(bomb.angle) * bomb.speed + Math.cos(side) * wobble) * ts;
+    bomb.y += (Math.sin(bomb.angle) * bomb.speed + Math.sin(side) * wobble) * ts;
+    bomb.traveled += step;
+    if (bomb.x < 0) bomb.x += W;
+    else if (bomb.x > W) bomb.x -= W;
+    if (bomb.y < 0) bomb.y += H;
+    else if (bomb.y > H) bomb.y -= H;
+    addBombSmoke(bomb);
+    if (bomb.traveled >= BOMB_RANGE || bombHitsObject(bomb)) {
+      detonateBomb(bomb);
+      bombs.splice(i, 1);
+    }
+  }
+
+  for (let i = bombWaves.length - 1; i >= 0; i--) {
+    const wave = bombWaves[i];
+    wave.radius += wave.speed * ts;
+    applyBombWave(wave, ts);
+    if (wave.radius >= wave.maxRadius) bombWaves.splice(i, 1);
+  }
+}
+
+function drawBombs() {
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  for (const bomb of bombs) {
+    ctx.save();
+    ctx.translate(bomb.x, bomb.y);
+    ctx.rotate(bomb.angle);
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(-6, 4.5);
+    ctx.lineTo(-6, -4.5);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawBombWaves() {
+  ctx.strokeStyle = "#4da3ff";
+  ctx.lineWidth = 3;
+  for (const wave of bombWaves) {
+    ctx.globalAlpha = Math.max(0.25, 1 - wave.radius / wave.maxRadius);
+    ctx.beginPath();
+    ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawBullets() {
@@ -1616,8 +3285,8 @@ function updateShip(dt) {
     }
 
     if (keys.KeyW) {
-      ship.vx += Math.cos(ship.angle) * ship.thrustPower * ts;
-      ship.vy += Math.sin(ship.angle) * ship.thrustPower * ts;
+      ship.vx += Math.cos(ship.angle) * shipThrustPower() * ts;
+      ship.vy += Math.sin(ship.angle) * shipThrustPower() * ts;
       thrusting = true;
       startThrustSound();
     }
@@ -1626,8 +3295,8 @@ function updateShip(dt) {
     if (keys.KeyD) ship.angle += ship.rotateSpeed * ts;
 
     if (keys.KeyW) {
-      ship.vx += Math.cos(ship.angle) * ship.thrustPower * ts;
-      ship.vy += Math.sin(ship.angle) * ship.thrustPower * ts;
+      ship.vx += Math.cos(ship.angle) * shipThrustPower() * ts;
+      ship.vy += Math.sin(ship.angle) * shipThrustPower() * ts;
       thrusting = true;
     }
 
@@ -1645,9 +3314,9 @@ function updateShip(dt) {
 
   // Cap max speed
   const speed = shipSpeed();
-  if (speed > ship.maxSpeed) {
-    ship.vx = (ship.vx / speed) * ship.maxSpeed;
-    ship.vy = (ship.vy / speed) * ship.maxSpeed;
+  if (speed > shipMaxSpeed()) {
+    ship.vx = (ship.vx / speed) * shipMaxSpeed();
+    ship.vy = (ship.vy / speed) * shipMaxSpeed();
   }
 
   ship.x += ship.vx * ts;
@@ -1659,7 +3328,7 @@ function updateShip(dt) {
     const thrustIntensity = inputMode === "mobile"
       ? joystick.power
       : (mouse.tracking ? mouse.power : 1);
-    const speedRatio = speed / ship.maxSpeed;
+    const speedRatio = speed / shipMaxSpeed();
     const spawnChance = (0.3 + speedRatio * 0.7) * thrustIntensity * ts;
     const spawnCount = speedRatio > 0.5 ? 2 : 1;
     if (Math.random() < spawnChance) {
@@ -1710,14 +3379,57 @@ function createShipDebris() {
       vx: Math.cos(outwardAngle) * speed + ship.vx * 0.4,
       vy: Math.sin(outwardAngle) * speed + ship.vy * 0.4,
       life: 1,
-      decay: 0.02,
+      decay: 0.008,
+      canSplit: true,
     };
   });
 }
 
+function debrisWorldPoint(piece, lx, ly) {
+  const cos = Math.cos(piece.angle);
+  const sin = Math.sin(piece.angle);
+  return {
+    x: piece.x + lx * cos - ly * sin,
+    y: piece.y + lx * sin + ly * cos,
+  };
+}
+
+function makeDebrisSegment(a, b, vx, vy, life) {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  return {
+    x: mx,
+    y: my,
+    ax: a.x - mx,
+    ay: a.y - my,
+    bx: b.x - mx,
+    by: b.y - my,
+    angle: 0,
+    spin: rand(-0.14, 0.14),
+    vx,
+    vy,
+    life,
+    decay: 0.00594,
+    canSplit: false,
+  };
+}
+
+function splitDebrisPiece(piece) {
+  const a = debrisWorldPoint(piece, piece.ax, piece.ay);
+  const b = debrisWorldPoint(piece, piece.bx, piece.by);
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const side = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
+  const kick = 0.9;
+  return [
+    makeDebrisSegment(a, mid, piece.vx + Math.cos(side) * kick, piece.vy + Math.sin(side) * kick, 0.95),
+    makeDebrisSegment(mid, b, piece.vx - Math.cos(side) * kick, piece.vy - Math.sin(side) * kick, 0.95),
+  ];
+}
+
 function updateShipDebris(dt) {
   const ts = timeScale(dt);
-  const drag = Math.pow(0.98, ts);
+  const drag = Math.pow(0.985, ts);
+  const next = [];
   for (const piece of shipDebris) {
     piece.x += piece.vx * ts;
     piece.y += piece.vy * ts;
@@ -1725,8 +3437,14 @@ function updateShipDebris(dt) {
     piece.vx *= drag;
     piece.vy *= drag;
     piece.life -= piece.decay * ts;
+    if (piece.life <= 0) continue;
+    if (piece.canSplit && piece.life <= 0.86) {
+      next.push(...splitDebrisPiece(piece));
+    } else {
+      next.push(piece);
+    }
   }
-  shipDebris = shipDebris.filter((piece) => piece.life > 0);
+  shipDebris = next;
 }
 
 function drawShipDebris() {
@@ -1747,10 +3465,18 @@ function drawShipDebris() {
 }
 
 function drawShip() {
+  if (performance.now() < invincibleUntil && Math.floor(performance.now() / 90) % 2 === 0) return;
   const [tip, left, right] = getShipVertices();
 
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 2;
+  if (shieldCharges > 0) {
+    ctx.strokeStyle = "#4da3ff";
+    ctx.beginPath();
+    ctx.arc(ship.x, ship.y, shipShieldRadius(), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#fff";
+  }
   ctx.beginPath();
   ctx.moveTo(tip.x, tip.y);
   ctx.lineTo(left.x, left.y);
@@ -1786,13 +3512,19 @@ function drawRocks() {
     }
     ctx.closePath();
     ctx.stroke();
+    if (rock.hidesCluster) {
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(0, 0, rock.radius * 0.48, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.restore();
   }
 }
 
 function breakRock(rock, index) {
-  score += rock.score;
-  scoreEl.textContent = "Score: " + score;
+  addScore(rock.score, rock.x, rock.y);
 
   const x = rock.x;
   const y = rock.y;
@@ -1801,19 +3533,31 @@ function breakRock(rock, index) {
   playExplosionSound(rock.size);
 
   if (rock.size === "large") {
-    screenShake = 12;
-    addExplosionParticles(x, y, 24);
+    screenShake = 16;
+    let cluster = null;
+    if (rock.hidesCluster) {
+      cluster = createCluster(x, y);
+      clusters.push(cluster);
+    }
+    maybeDropPickup(x, y);
+    addRockDotBurst(x, y, rock.radius, 28);
     const pieceCount = Math.floor(rand(2, 4));
     for (let i = 0; i < pieceCount; i++) {
-      const vel = randomVelocity(0, 1.0);
-      rocks.push(createRock(
-        x, y, "medium",
-        vel.vx,
-        vel.vy
-      ));
+      const vel = randomVelocity(0.4, 1.2);
+      let px = x;
+      let py = y;
+      if (cluster) {
+        const ang = rand(0, Math.PI * 2);
+        const dist = cluster.radius + ROCK_SIZES.medium.radius + 6;
+        px += Math.cos(ang) * dist;
+        py += Math.sin(ang) * dist;
+        vel.vx += Math.cos(ang) * 0.8;
+        vel.vy += Math.sin(ang) * 0.8;
+      }
+      rocks.push(createRock(px, py, "medium", vel.vx, vel.vy));
     }
   } else if (rock.size === "medium") {
-    addExplosionParticles(x, y, 14);
+    addRockDotBurst(x, y, rock.radius, 16);
     for (let i = 0; i < 2; i++) {
       const vel = randomVelocity(0.8, 2.0);
       rocks.push(createRock(
@@ -1823,7 +3567,7 @@ function breakRock(rock, index) {
       ));
     }
   } else {
-    addExplosionParticles(x, y, 6);
+    addRockDotBurst(x, y, rock.radius, 8);
   }
 
   rocks.splice(index, 1);
@@ -1846,6 +3590,11 @@ function checkCollisions() {
     }
     if (hit) continue;
 
+    if (bulletHitsCluster(b) || bulletHitsBoss(b)) {
+      bullets.splice(i, 1);
+      continue;
+    }
+
     for (let k = ufos.length - 1; k >= 0; k--) {
       const ufo = ufos[k];
       if (distance(b.x, b.y, ufo.x, ufo.y) < ufo.radius) {
@@ -1856,21 +3605,50 @@ function checkCollisions() {
     }
   }
 
-  // Ship vs rock / UFO
-  if (!gameOver && !shipBreakActive) {
-    for (const rock of rocks) {
-      if (distance(ship.x, ship.y, rock.x, rock.y) < rock.radius + ship.radius - 4) {
-        triggerGameOver();
-        return;
-      }
-    }
+  collectPickup();
 
-    for (const ufo of ufos) {
-      if (distance(ship.x, ship.y, ufo.x, ufo.y) < ufo.radius + ship.radius - 4) {
-        triggerGameOver();
-        return;
-      }
+  if (gameOver || shipBreakActive || waitingToStart) return;
+
+  if (!shipCanBeHit()) {
+    separateShipFromHazards();
+    return;
+  }
+
+  for (const rock of rocks) {
+    if (distance(ship.x, ship.y, rock.x, rock.y) < rock.radius + ship.radius - 4) {
+      hurtShip();
+      return;
     }
+  }
+
+  for (let i = ufos.length - 1; i >= 0; i--) {
+    const ufo = ufos[i];
+    if (distance(ship.x, ship.y, ufo.x, ufo.y) < ufo.radius + ship.radius - 4) {
+      destroyUfo(i);
+      hurtShip();
+      return;
+    }
+  }
+
+  for (let c = clusters.length - 1; c >= 0; c--) {
+    const cluster = clusters[c];
+    if (popCirclesTouchedByShield(cluster, c)) {
+      hurtShip();
+      return;
+    }
+    if (shipHitsCluster(cluster)) {
+      hurtShip();
+      return;
+    }
+  }
+
+  if (shieldHitsBoss()) {
+    hurtShip();
+    return;
+  }
+  if (shipHitsBoss()) {
+    hurtShip();
+    return;
   }
 }
 
@@ -1918,6 +3696,111 @@ function drawGameOver() {
   ctx.textAlign = "left";
 }
 
+let stars = [];
+
+function createStarfield() {
+  stars = [];
+  const count = Math.max(36, Math.round((W * H) / 7500));
+  for (let i = 0; i < count; i++) {
+    const near = i >= count * 0.62;
+    stars.push({
+      x: rand(0, W),
+      y: rand(0, H),
+      speed: near ? rand(16, 28) : rand(6, 12),
+      drift: rand(-0.18, 0.18),
+      size: near ? rand(1.4, 2) : 1,
+      alpha: near ? rand(0.55, 0.9) : rand(0.22, 0.42),
+    });
+  }
+}
+
+function updateStars(dt) {
+  if (!stars.length) createStarfield();
+  for (const star of stars) {
+    star.x -= star.speed * dt;
+    star.y += star.speed * star.drift * dt;
+    if (star.x < 0) star.x += W;
+    else if (star.x >= W) star.x -= W;
+    if (star.y < 0) star.y += H;
+    else if (star.y >= H) star.y -= H;
+  }
+}
+
+function pointInTri(px, py, a, b, c) {
+  const ab = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+  const bc = (c.x - b.x) * (py - b.y) - (c.y - b.y) * (px - b.x);
+  const ca = (a.x - c.x) * (py - c.y) - (a.y - c.y) * (px - c.x);
+  return (ab >= 0 && bc >= 0 && ca >= 0) || (ab <= 0 && bc <= 0 && ca <= 0);
+}
+
+function starInsideRock(rock, x, y) {
+  const dx = x - rock.x;
+  const dy = y - rock.y;
+  if (dx * dx + dy * dy > rock.radius * rock.radius) return false;
+  const cos = Math.cos(rock.angle);
+  const sin = Math.sin(rock.angle);
+  const lx = dx * cos + dy * sin;
+  const ly = -dx * sin + dy * cos;
+  const pts = rock.points;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x;
+    const yi = pts[i].y;
+    const xj = pts[j].x;
+    const yj = pts[j].y;
+    if ((yi > ly) !== (yj > ly) && lx < ((xj - xi) * (ly - yi)) / (yj - yi + 0.00001) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function starInsideShip(x, y) {
+  if (shipBreakActive || gameOver) return false;
+  const pad = 3;
+  const grown = getShipVertices().map((v) => {
+    const dx = v.x - ship.x;
+    const dy = v.y - ship.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: v.x + (dx / len) * pad, y: v.y + (dy / len) * pad };
+  });
+  return pointInTri(x, y, grown[0], grown[1], grown[2]);
+}
+
+function starIsCovered(x, y) {
+  for (const rock of rocks) {
+    if (starInsideRock(rock, x, y)) return true;
+  }
+  for (const ufo of ufos) {
+    const reach = Math.max(ufo.radius, ((ufo.visualRadius || 32) * 0.5) * 1.25);
+    if (distance(x, y, ufo.x, ufo.y) < reach) return true;
+  }
+  for (const cluster of clusters) {
+    for (const circle of cluster.circles) {
+      const pos = circleWorldPos(cluster, circle);
+      if (distance(x, y, pos.x, pos.y) < CLUSTER_CIRCLE_R) return true;
+    }
+  }
+  if (boss) {
+    for (const circle of boss.circles) {
+      if (!circle.alive) continue;
+      const pos = circleWorldPos(boss, circle);
+      if (distance(x, y, pos.x, pos.y) < CLUSTER_CIRCLE_R * (circle.grow || 1)) return true;
+    }
+  }
+  return starInsideShip(x, y);
+}
+
+function drawStars() {
+  ctx.fillStyle = "#fff";
+  for (const star of stars) {
+    if (starIsCovered(star.x, star.y)) continue;
+    ctx.globalAlpha = star.alpha;
+    ctx.fillRect(star.x, star.y, star.size, star.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
 function updateScreenShake(dt) {
   if (screenShake <= 0) return;
   const ts = timeScale(dt);
@@ -1926,6 +3809,8 @@ function updateScreenShake(dt) {
 }
 
 function draw() {
+  const pixelScale = canvas.width / W;
+  ctx.setTransform(pixelScale, 0, 0, pixelScale, 0, 0);
   ctx.save();
 
   // Screen shake
@@ -1937,48 +3822,77 @@ function draw() {
 
   ctx.fillStyle = "#000";
   ctx.fillRect(-10, -10, W + 20, H + 20);
+  drawStars();
 
-  if (shipBreakActive) {
+  if (shipBreakActive && !pendingRespawn) {
     drawParticles();
     drawShipDebris();
   } else if (!gameOver) {
     drawRocks();
+    drawClusters();
+    drawBoss();
     drawUfos();
+    drawPickup();
     drawBullets();
+    drawBombs();
     drawParticles();
     drawShockwaves();
-    drawShip();
+    drawBombWaves();
+    if (!shipBreakActive) drawShip();
+    drawShipDebris();
+    drawScorePopups();
+    drawWaveBanner();
+    drawHitFlash();
   } else {
     drawGameOver();
+    drawShipDebris();
   }
 
   ctx.restore();
+  if (!waitingToStart && !gameOver) drawLives();
 }
 
 // --- Game loop ---
 function update(currentTime) {
   const dt = Math.min((currentTime - lastFrameTime) / 1000, MAX_DELTA_TIME);
   lastFrameTime = currentTime;
+  updateStars(dt);
 
   if (!waitingToStart && !gameOver && !shipBreakActive) {
     updateShip(dt);
     updateRocks(dt);
     updateUfos(dt);
-    updateUfoSpawning(dt);
+    if (waveBanner <= 0) updateUfoSpawning(dt);
+    updateClusters(dt);
+    updateBoss(dt);
+    separateRocksFromHazards();
+    updatePickup(dt);
     updateBullets(dt);
+    updateBombs(dt);
     updateShockwaves(dt);
     checkCollisions();
-    if (rocks.length === 0) spawnNextWave();
+    if (rocks.length === 0 && !boss && !pendingWaveEnemies && waveBanner <= 0) spawnNextWave();
   }
 
   if (shipBreakActive) {
     shipBreakTimer += dt;
-    updateShipDebris(dt);
-    if (shipBreakTimer >= SHIP_BREAK_DURATION) {
+    const debrisGone = shipDebris.length === 0 && shipBreakTimer > 0.2;
+    if (pendingRespawn && debrisGone) {
+      shipBreakActive = false;
+      pendingRespawn = false;
+      const spawn = findRespawnPosition();
+      ship.x = spawn.x;
+      ship.y = spawn.y;
+      ship.angle = -Math.PI / 2;
+      ship.vx = 0;
+      ship.vy = 0;
+      invincibleUntil = performance.now() + INVINCIBLE_MS;
+      screenShake = 0;
+      separateShipFromHazards();
+    } else if (!pendingRespawn && shipBreakTimer >= SHIP_BREAK_DURATION) {
       shipBreakActive = false;
       gameOver = true;
       addHighScore(score);
-      shipDebris = [];
       particles = [];
       shockwaves = [];
       screenShake = 0;
@@ -1987,6 +3901,9 @@ function update(currentTime) {
 
   updateScreenShake(dt);
   updateWaveUI();
+  syncPowerupLabel();
+  updateScorePopups(dt);
+  updateShipDebris(dt);
   updateParticles(dt);
   draw();
   requestAnimationFrame(update);
@@ -2004,6 +3921,8 @@ function resetGame() {
   screenShake = 0;
   particles = [];
   bullets = [];
+  bombs = [];
+  bombWaves = [];
   ship.x = W / 2;
   ship.y = H / 2;
   ship.angle = -Math.PI / 2;
@@ -2014,11 +3933,23 @@ function resetGame() {
   resetJoystick();
   resetMouse();
   resetUfoSpawning();
-  spawnInitialRocks(4);
+  resetArcadeRun(true);
+  rocks = [];
+  rockCount = 4;
+  beginWaveIntro("WAVE 1", "", "rocks");
   updateWaveUI();
 }
 
 // --- Start ---
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) silenceGameAudio();
+  else if (sfx.ctx && sfx.ctx.state === "suspended" && !sfx.muted) {
+    sfx.ctx.resume();
+    if (ufos.length) onUfoRemoved();
+  }
+});
+window.addEventListener("pagehide", silenceGameAudio);
+
 resizeGame();
 setupMobileControls();
 setupDesktopMouseControls();

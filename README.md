@@ -62,9 +62,9 @@ These are for testing. They do nothing on the title screen or during game over, 
 - **Red clusters** — some large rocks hide a cluster of small red circles. Bullets peel the outer ring. The ship touching one costs a life. Destroying the last circle clears the cluster
 - **UFO hunter** — a green saucer that does not shoot. It patrols, chases when you are close, and steers around rocks and clusters. Contact costs a life unless a shield is up. From wave 5, up to two UFOs can be on screen. UFOs are worth 500 points
 - **Boss** — wave 5 and every 5th wave is **CRIMSON NUCLEUS**, a spinning red core with five outer shells. It chases slowly. Peel circles one at a time; the boss dies only when every core circle is gone. Under half core it stops, pulses five red rings, then regrows missing shell circles from the inside out. Later rebuilds wait until the outer shell is under half. After a boss, later waves add extra rocks and a little more rock speed
-- **Shockwave** — **E** or **WAVE**, with a 5-second cooldown. The label at the top-right reads **SHOCKWAVE READY**. The ring breaks rocks, destroys UFOs, and pops cluster and boss circles it touches. Firing it also slows the ship along the direction it is facing
+- **Shockwave** — **E** or **WAVE**, with a 5-second cooldown. The label at the top-right reads **SHOCKWAVE READY**. The ring breaks rocks, destroys UFOs, and pops cluster and boss circles it touches. Firing it also slows the ship along the direction it is facing. Rocks and the shockwave keep moving while the ship is breaking. Pieces from a broken rock are pushed clear of the ship so they do not appear on top of it
 - **Pickups** — blue icons that drift until collected. At most 10 of each type can be on screen. Each one lasts 30 seconds, then blinks and fades over the last 8 seconds. Effects stay active together until their own timers end
-- **Score and high scores** — score at the top-left, wave at the top-center, active pickups in blue under the shockwave label. Top 5 scores are saved in `localStorage`
+- **Score and high scores** — score at the top-left, wave at the top-center, active pickups in blue under the shockwave label. The top 5 scores are saved in `localStorage`, each with the wave from that game over. On the game over screen they form a centered grid of rank, score, and wave. A `*` sits just to the right of the latest record
 - **Delta time** — movement and timers follow real time, so a 30 fps device and a 144 Hz monitor play at the same speed until a frame takes longer than 50 ms
 - **Sound** — Web Audio only (no audio files): lasers, explosions, thrust, shockwave, UFO hums, cluster pops, and bomb sounds. The UFO hum stops when the UFO leaves or is destroyed, and when the tab is hidden
 
@@ -76,7 +76,7 @@ These are for testing. They do nothing on the title screen or during game over, 
 | **Triple** | Blue diamond with **3** | 8 seconds of three bullets per shot (one ahead, two angled out). Another triple pickup adds 8 seconds. With rapid fire, the three-bullet shot fires faster |
 | **Slow** | Blue circle with a dash | 8 seconds of slower ship speed. Another slow pickup sets the timer back to 8 seconds |
 | **Shield** | Blue circle with a plus | One charge. Touching a hazard pops the circles the shield touches, then the shield breaks, and you do not lose a life |
-| **Bomb** | Blue triangle with **B** | Adds one stored charge (they stack). It does not fire on pickup. Space or **B** launches one white triangle that wiggles, wraps the screen, and explodes on impact or after a set distance. The blue blast destroys rocks, UFOs, and whole clusters, and pops boss circles near the impact. The ship is shoved if the ring touches it |
+| **Bomb** | Blue triangle with **B** | Adds one stored charge (they stack). It does not fire on pickup. Space or **B** launches one blue triangle that wiggles, wraps the screen, and explodes on impact or after a set distance. The blue blast destroys rocks, UFOs, and whole clusters, and pops boss circles near the impact. The ship is shoved if the ring touches it |
 
 Letters on pickups spin with the icon.
 
@@ -115,6 +115,12 @@ Letters on pickups spin with the icon.
 
 - Marked the bomb pickup with a blue **B** that spins with the triangle, the same way **R** and **3** spin
 - Pickups now disappear after 30 seconds, blinking and fading over the last 8 seconds
+
+### Version 3.2
+
+- The fired bomb is a blue triangle, matching the pickup
+- High scores save the wave reached and show rank, score, and wave in a centered grid, with `*` beside the latest record
+- The playfield keeps moving during a ship break, and rock pieces from a shockwave are pushed clear of the ship
 
 ---
 

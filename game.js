@@ -1293,6 +1293,16 @@ function shipSpeed() {
   return Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy);
 }
 
+function scoreValue(entry) {
+  if (entry == null) return null;
+  return typeof entry === "number" ? entry : entry.score;
+}
+
+function scoreWave(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  return entry.wave;
+}
+
 function loadHighScores() {
   try {
     const saved = localStorage.getItem(HIGH_SCORE_KEY);
@@ -1308,9 +1318,9 @@ function saveHighScores() {
   localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(highScores));
 }
 
-function addHighScore(newScore) {
-  highScores.push(newScore);
-  highScores.sort((a, b) => b - a);
+function addHighScore(newScore, newWave) {
+  highScores.push({ score: newScore, wave: newWave });
+  highScores.sort((a, b) => scoreValue(b) - scoreValue(a));
   highScores = highScores.slice(0, MAX_HIGH_SCORES);
   saveHighScores();
 }
@@ -3227,7 +3237,7 @@ function updateBombs(dt) {
 }
 
 function drawBombs() {
-  ctx.strokeStyle = "#fff";
+  ctx.strokeStyle = "#4da3ff";
   ctx.lineWidth = 2;
   for (const bomb of bombs) {
     ctx.save();
@@ -3523,6 +3533,30 @@ function drawRocks() {
   }
 }
 
+function clearSpawnFromShip(obj) {
+  if (shipBreakActive || gameOver || waitingToStart) return;
+  const reach = (obj.radius || 0) + ship.radius + 8;
+  let dx = obj.x - ship.x;
+  let dy = obj.y - ship.y;
+  let dist = Math.hypot(dx, dy);
+  if (dist >= reach) return;
+  if (dist < 0.01) {
+    dx = Math.cos(ship.angle + Math.PI);
+    dy = Math.sin(ship.angle + Math.PI);
+    dist = 1;
+  }
+  obj.x = ship.x + (dx / dist) * reach;
+  obj.y = ship.y + (dy / dist) * reach;
+  if (obj.pushX != null) {
+    obj.pushX += (dx / dist) * 1.4;
+    obj.pushY += (dy / dist) * 1.4;
+  } else {
+    obj.vx = (obj.vx || 0) + (dx / dist) * 1.4;
+    obj.vy = (obj.vy || 0) + (dy / dist) * 1.4;
+  }
+  wrapPosition(obj);
+}
+
 function breakRock(rock, index) {
   addScore(rock.score, rock.x, rock.y);
 
@@ -3538,6 +3572,7 @@ function breakRock(rock, index) {
     if (rock.hidesCluster) {
       cluster = createCluster(x, y);
       clusters.push(cluster);
+      clearSpawnFromShip(cluster);
     }
     maybeDropPickup(x, y);
     addRockDotBurst(x, y, rock.radius, 28);
@@ -3554,17 +3589,21 @@ function breakRock(rock, index) {
         vel.vx += Math.cos(ang) * 0.8;
         vel.vy += Math.sin(ang) * 0.8;
       }
-      rocks.push(createRock(px, py, "medium", vel.vx, vel.vy));
+      const piece = createRock(px, py, "medium", vel.vx, vel.vy);
+      clearSpawnFromShip(piece);
+      rocks.push(piece);
     }
   } else if (rock.size === "medium") {
     addRockDotBurst(x, y, rock.radius, 16);
     for (let i = 0; i < 2; i++) {
       const vel = randomVelocity(0.8, 2.0);
-      rocks.push(createRock(
+      const piece = createRock(
         x, y, "small",
         vel.vx,
         vel.vy
-      ));
+      );
+      clearSpawnFromShip(piece);
+      rocks.push(piece);
     }
   } else {
     addRockDotBurst(x, y, rock.radius, 8);
@@ -3680,13 +3719,40 @@ function drawGameOver() {
 
   y += mobile ? H * 0.06 : 35;
   ctx.font = `${entrySize}px Courier New`;
+  ctx.textAlign = "left";
+  const rows = [];
   for (let i = 0; i < MAX_HIGH_SCORES; i++) {
-    const rank = i + 1;
-    const value = highScores[i] !== undefined ? highScores[i] : "---";
-    const isCurrentScore = highScores[i] === score && score > 0;
-    ctx.fillText(rank + ".  " + value + (isCurrentScore ? "  *" : ""), W / 2, y);
+    const entry = highScores[i];
+    const value = scoreValue(entry);
+    const waveReached = scoreWave(entry);
+    rows.push({
+      rank: (i + 1) + ".",
+      score: value == null ? "---" : String(value),
+      wave: waveReached == null ? "" : "WAVE " + waveReached,
+      latest: value === score && score > 0,
+    });
+  }
+  const gap = mobile ? 18 : 36;
+  const colW = [0, 0, ctx.measureText("WAVE 00").width];
+  for (const row of rows) {
+    colW[0] = Math.max(colW[0], ctx.measureText(row.rank).width);
+    colW[1] = Math.max(colW[1], ctx.measureText(row.score).width);
+    if (row.wave) colW[2] = Math.max(colW[2], ctx.measureText(row.wave).width);
+  }
+  const gridW = colW[0] + colW[1] + colW[2] + gap * 2;
+  const gridX = (W - gridW) / 2;
+  const colX = [gridX, gridX + colW[0] + gap, gridX + colW[0] + gap + colW[1] + gap];
+  for (const row of rows) {
+    const cells = [row.rank, row.score, row.wave];
+    for (let c = 0; c < 3; c++) {
+      if (!cells[c]) continue;
+      const textW = ctx.measureText(cells[c]).width;
+      ctx.fillText(cells[c], colX[c] + (colW[c] - textW) / 2, y);
+    }
+    if (row.latest) ctx.fillText("*", gridX + gridW + (mobile ? 10 : 16), y);
     y += lineGap;
   }
+  ctx.textAlign = "center";
 
   ctx.font = `${hintSize}px Courier New`;
   const restartHint = mobile
@@ -3858,8 +3924,8 @@ function update(currentTime) {
   lastFrameTime = currentTime;
   updateStars(dt);
 
-  if (!waitingToStart && !gameOver && !shipBreakActive) {
-    updateShip(dt);
+  if (!waitingToStart && !gameOver) {
+    if (!shipBreakActive) updateShip(dt);
     updateRocks(dt);
     updateUfos(dt);
     if (waveBanner <= 0) updateUfoSpawning(dt);
@@ -3871,7 +3937,7 @@ function update(currentTime) {
     updateBombs(dt);
     updateShockwaves(dt);
     checkCollisions();
-    if (rocks.length === 0 && !boss && !pendingWaveEnemies && waveBanner <= 0) spawnNextWave();
+    if (!shipBreakActive && rocks.length === 0 && !boss && !pendingWaveEnemies && waveBanner <= 0) spawnNextWave();
   }
 
   if (shipBreakActive) {
@@ -3892,7 +3958,7 @@ function update(currentTime) {
     } else if (!pendingRespawn && shipBreakTimer >= SHIP_BREAK_DURATION) {
       shipBreakActive = false;
       gameOver = true;
-      addHighScore(score);
+      addHighScore(score, wave);
       particles = [];
       shockwaves = [];
       screenShake = 0;

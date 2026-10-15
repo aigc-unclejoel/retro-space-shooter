@@ -3002,13 +3002,13 @@ let lastShot = 0;
 const SHOT_COOLDOWN = 200;
 
 function drawPickupLetter(type) {
-  const letter = type === "rapid" ? "R" : type === "triple" ? "3" : "";
+  const letter = type === "rapid" ? "R" : type === "triple" ? "3" : type === "bomb" ? "B" : "";
   if (!letter) return;
   ctx.fillStyle = "#4da3ff";
   ctx.font = "bold 12px Courier New";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(letter, 0, 0);
+  ctx.fillText(letter, 0, type === "bomb" ? 2 : 0);
 }
 
 function spawnBullet(spread) {

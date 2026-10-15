@@ -76,7 +76,7 @@ These are for testing. They do nothing on the title screen or during game over, 
 | **Triple** | Blue diamond with **3** | 8 seconds of three bullets per shot (one ahead, two angled out). Another triple pickup adds 8 seconds. With rapid fire, the three-bullet shot fires faster |
 | **Slow** | Blue circle with a dash | 8 seconds of slower ship speed. Another slow pickup sets the timer back to 8 seconds |
 | **Shield** | Blue circle with a plus | One charge. Touching a hazard pops the circles the shield touches, then the shield breaks, and you do not lose a life |
-| **Bomb** | Blue triangle | Adds one stored charge (they stack). It does not fire on pickup. Space or **B** launches one white triangle that wiggles, wraps the screen, and explodes on impact or after a set distance. The blue blast destroys rocks, UFOs, and whole clusters, and pops boss circles near the impact. The ship is shoved if the ring touches it |
+| **Bomb** | Blue triangle with **B** | Adds one stored charge (they stack). It does not fire on pickup. Space or **B** launches one white triangle that wiggles, wraps the screen, and explodes on impact or after a set distance. The blue blast destroys rocks, UFOs, and whole clusters, and pops boss circles near the impact. The ship is shoved if the ring touches it |
 
 Letters on pickups spin with the icon.
 
@@ -110,6 +110,11 @@ Letters on pickups spin with the icon.
 - Added wave title cards and the Crimson Nucleus boss on every 5th wave
 - Added the triple-shot pickup and the pickup limit, timer, and fade
 - Added debug keys **B** and **1**
+
+### Version 3.1
+
+- Marked the bomb pickup with a blue **B** that spins with the triangle, the same way **R** and **3** spin
+- Pickups now disappear after 30 seconds, blinking and fading over the last 8 seconds
 
 ---
 

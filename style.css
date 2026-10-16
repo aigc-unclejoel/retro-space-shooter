@@ -74,6 +74,49 @@ body.mobile-mode.portrait-rotated #game-container {
   transform-origin: top left;
 }
 
+/* iPhone and iPad start inside the visible Safari window. FULL SCREEN expands over it. */
+body.mobile-mode.apple-device:not(.screen-expanded) #game-container {
+  width: 100vw;
+  width: 100svw;
+  height: 100vh;
+  height: 100svh;
+}
+
+body.mobile-mode.apple-device.portrait-rotated:not(.screen-expanded) #game-container {
+  width: 100vh;
+  width: 100svh;
+  height: 100vw;
+  height: 100svw;
+  left: 100vw;
+  left: 100svw;
+}
+
+body.mobile-mode.apple-device.screen-expanded #game-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  width: 100lvw;
+  height: 100vh;
+  height: 100lvh;
+}
+
+body.mobile-mode.apple-device.portrait-rotated.screen-expanded #game-container {
+  width: 100vh;
+  width: 100lvh;
+  height: 100vw;
+  height: 100lvw;
+  top: 0;
+  left: 100vw;
+  left: 100lvw;
+}
+
+html.apple-scroll,
+html.apple-scroll body {
+  overflow: auto;
+  height: calc(100lvh + 80px);
+}
+
 body.desktop-mode #game {
   border: none;
   cursor: crosshair;
@@ -268,16 +311,66 @@ body.mobile-mode #start-screen {
   padding: 10px 12px;
 }
 
+.title-lockup {
+  --hero-size: clamp(64px, 11vw, 108px);
+  --imp-size: clamp(27px, 4vw, 41px);
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 22px 0 calc(4px + var(--imp-size) + 14px);
+}
+
+.title-retro {
+  position: absolute;
+  left: 0;
+  top: -0.72em;
+  font-family: "Caveat", "Segoe Script", "Brush Script MT", cursive;
+  font-size: clamp(34px, 5vw, 52px);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  transform: rotate(-8deg);
+  transform-origin: left center;
+}
+
 #start-screen h1 {
-  font-size: clamp(28px, 8vw, 42px);
-  letter-spacing: 8px;
-  margin-bottom: 20px;
+  font-size: var(--hero-size);
+  letter-spacing: 0.14em;
+  line-height: 0.9;
+  margin: 0;
+  font-weight: 700;
+}
+
+.title-impossible {
+  position: absolute;
+  right: 0.12em;
+  top: calc(100% + 4px);
+  margin: 0;
+  font-family: "Black Ops One", "Arial Black", Impact, sans-serif;
+  font-size: var(--imp-size);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+body.mobile-mode .title-lockup {
+  --hero-size: 54px;
+  --imp-size: 23px;
+  margin: 8px 0 calc(4px + 23px + 8px);
+}
+
+body.mobile-mode .title-retro {
+  font-size: 32px;
+  top: -0.62em;
 }
 
 body.mobile-mode #start-screen h1 {
-  font-size: 28px;
-  letter-spacing: 6px;
-  margin-bottom: 12px;
+  letter-spacing: 0.1em;
+}
+
+body.mobile-mode .title-impossible {
+  right: 0.06em;
 }
 
 .instructions {

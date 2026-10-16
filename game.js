@@ -51,10 +51,13 @@ let waveBannerSub = "";
 let controlsFadeAt = 0;
 let pendingWaveEnemies = null;
 const BOSS_NAME = "CRIMSON NUCLEUS";
+const W10_BOSS_NAME = "CRIMSON HALO";
 let scorePopups = [];
 let clusters = [];
+let clusterSeekers = [];
 let boss = null;
 let bossPulses = [];
+let bossBullets = [];
 let rockSpeedBonus = 0;
 let pickups = [];
 let bombs = [];
@@ -71,6 +74,10 @@ const INVINCIBLE_MS = 2000;
 const WAVE_CLEAR_BONUS = 100;
 const CLEAN_WAVE_BONUS = 150;
 const CLUSTER_SPAWN_CHANCE = 0.25;
+const CLUSTER2_SPAWN_CHANCE = 0.14;
+const CLUSTER2_OUTER_R = 16;
+const CLUSTER2_SPEED = 0.9;
+const CLUSTER2_PULSE_GAP = 0.8;
 const CLUSTER_CIRCLE_R = 5.6;
 const CLUSTER_POP_SCORE = 20;
 const CLUSTER_CLEAR_SCORE = 200;
@@ -185,6 +192,10 @@ const sfx = {
   volume: 0.864,
   primed: false,
   ready: false,
+  titleGain: null,
+  titleOn: false,
+  titleNext: 0,
+  titleStep: 0,
 };
 
 function initAudio() {
@@ -214,6 +225,10 @@ function initAudio() {
   sfx.thrustFilter.connect(sfx.thrustGain);
   sfx.thrustGain.connect(sfx.master);
   sfx.thrustOsc.start();
+
+  sfx.titleGain = sfx.ctx.createGain();
+  sfx.titleGain.gain.value = 0.0001;
+  sfx.titleGain.connect(sfx.master);
 
   initUfoSoundNodes();
 
@@ -328,6 +343,24 @@ function playClusterPopSound() {
   gain.connect(sfx.master);
   osc.start(now);
   osc.stop(now + 0.08);
+}
+
+function playBossDeathSound() {
+  if (!sfx.ready || sfx.muted) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(210, now);
+  osc.frequency.exponentialRampToValueAtTime(36, now + BOSS_DEATH_SHAKE);
+  gain.gain.setValueAtTime(0.18, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + BOSS_DEATH_SHAKE);
+  osc.connect(gain);
+  gain.connect(sfx.master);
+  osc.start(now);
+  osc.stop(now + BOSS_DEATH_SHAKE + 0.02);
+  playNoiseBurst(BOSS_DEATH_SHAKE, 0.16, 140);
 }
 
 function playClusterClearSound() {
@@ -452,7 +485,10 @@ function resumeAudio() {
   initAudio();
   const ctx = sfx.ctx;
   if (ctx.state !== "running") ctx.resume();
-  if (sfx.primed) return;
+  if (sfx.primed) {
+    if (waitingToStart && !sfx.muted) startTitleMusic();
+    return;
+  }
   const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
   const src = ctx.createBufferSource();
   src.buffer = buffer;
@@ -462,6 +498,110 @@ function resumeAudio() {
   gain.connect(ctx.destination);
   try { src.start(0); } catch (err) {}
   sfx.primed = true;
+  if (waitingToStart && !sfx.muted) startTitleMusic();
+}
+
+const TITLE_BPM = 92;
+const TITLE_STEP = 60 / TITLE_BPM / 2;
+const TITLE_BARS = 32;
+const TITLE_LEAD = [
+  [0, 69, 4],
+  [4, 76, 2],
+  [6, 72, 2],
+  [8, 74, 4],
+  [12, 71, 2],
+  [14, 67, 2],
+  [16, 69, 2],
+  [18, 72, 2],
+  [20, 76, 4],
+  [24, 74, 2],
+  [26, 72, 2],
+  [28, 71, 2],
+  [30, 69, 2],
+];
+const TITLE_BASS = [
+  [0, 45, 8],
+  [8, 41, 8],
+  [16, 36, 4],
+  [20, 43, 4],
+  [24, 45, 8],
+];
+
+function startTitleMusic() {
+  if (!waitingToStart || sfx.muted) return;
+  initAudio();
+  if (!sfx.titleGain || sfx.titleOn) return;
+  sfx.titleOn = true;
+  sfx.titleStep = 0;
+  sfx.titleNext = sfx.ctx.currentTime + 0.06;
+  const gain = sfx.titleGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(0.0001, now);
+  gain.linearRampToValueAtTime(0.42, now + 0.6);
+}
+
+function fadeTitleMusic() {
+  if (!sfx.titleGain || !sfx.ctx) {
+    sfx.titleOn = false;
+    return;
+  }
+  sfx.titleOn = false;
+  const gain = sfx.titleGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(Math.max(0.0001, gain.value), now);
+  gain.linearRampToValueAtTime(0.0001, now + 1.25);
+}
+
+function stopTitleMusic() {
+  sfx.titleOn = false;
+  if (!sfx.titleGain || !sfx.ctx) return;
+  const gain = sfx.titleGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(0.0001, now);
+}
+
+function scheduleTitleMusic() {
+  if (!sfx.titleOn || !sfx.ctx || sfx.ctx.state !== "running") return;
+  const horizon = sfx.ctx.currentTime + 0.25;
+  while (sfx.titleNext < horizon) {
+    const step = sfx.titleStep % TITLE_BARS;
+    for (const note of TITLE_LEAD) {
+      if (note[0] === step) playTitleTone(sfx.titleNext, note[1], note[2], "square", 0.09, 1100);
+    }
+    for (const note of TITLE_BASS) {
+      if (note[0] === step) playTitleTone(sfx.titleNext, note[1], note[2], "triangle", 0.14, 0);
+    }
+    sfx.titleNext += TITLE_STEP;
+    sfx.titleStep++;
+  }
+}
+
+function playTitleTone(time, midi, steps, type, peak, lowpass) {
+  const ctx = sfx.ctx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+  const dur = Math.max(0.08, steps * TITLE_STEP);
+  gain.gain.setValueAtTime(0.0001, time);
+  gain.gain.exponentialRampToValueAtTime(peak, time + 0.03);
+  gain.gain.exponentialRampToValueAtTime(peak * 0.55, time + dur * 0.72);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+  if (lowpass > 0) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = lowpass;
+    osc.connect(filter);
+    filter.connect(gain);
+  } else {
+    osc.connect(gain);
+  }
+  gain.connect(sfx.titleGain);
+  osc.start(time);
+  osc.stop(time + dur + 0.02);
 }
 
 function setMuted(muted) {
@@ -472,6 +612,9 @@ function setMuted(muted) {
   if (muted) {
     stopThrustSound();
     stopAllUfoSounds();
+    stopTitleMusic(true);
+  } else if (waitingToStart) {
+    startTitleMusic();
   }
   muteBtn.textContent = muted ? "SFX OFF" : "SFX ON";
 }
@@ -622,6 +765,49 @@ function playBombLaunchSound() {
   osc.stop(now + 0.15);
 }
 
+function startBombFlightSound(bomb) {
+  if (!sfx.ready || sfx.muted || bomb.flight) return;
+  const ctx = sfx.ctx;
+  const osc = ctx.createOscillator();
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.value = 210;
+  lfo.type = "sine";
+  lfo.frequency.value = 14;
+  lfoGain.gain.value = 28;
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  filter.type = "bandpass";
+  filter.frequency.value = 640;
+  filter.Q.value = 3.2;
+  gain.gain.value = 0.045;
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(sfx.master);
+  osc.start();
+  lfo.start();
+  bomb.flight = { osc, lfo, gain };
+}
+
+function stopBombFlightSound(bomb) {
+  if (!bomb || !bomb.flight || !sfx.ctx) return;
+  const now = sfx.ctx.currentTime;
+  const gain = bomb.flight.gain.gain;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(Math.max(0.0001, gain.value), now);
+  gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+  try { bomb.flight.osc.stop(now + 0.06); } catch (err) {}
+  try { bomb.flight.lfo.stop(now + 0.06); } catch (err) {}
+  bomb.flight = null;
+}
+
+function stopAllBombFlightSounds() {
+  for (const bomb of bombs) stopBombFlightSound(bomb);
+}
+
 function playShockwaveSound() {
   if (!sfx.ready || sfx.muted) return;
   const ctx = sfx.ctx;
@@ -638,6 +824,53 @@ function playShockwaveSound() {
   osc.start(now);
   osc.stop(now + 0.32);
   playNoiseBurst(0.2, 0.12, 500);
+}
+
+function playBombExplodeSound() {
+  if (!sfx.ready || sfx.muted) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+
+  const body = ctx.createOscillator();
+  const bodyGain = ctx.createGain();
+  body.type = "sawtooth";
+  body.frequency.setValueAtTime(120, now);
+  body.frequency.exponentialRampToValueAtTime(32, now + 0.42);
+  bodyGain.gain.setValueAtTime(0.24, now);
+  bodyGain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+  body.connect(bodyGain);
+  bodyGain.connect(sfx.master);
+  body.start(now);
+  body.stop(now + 0.5);
+
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = "sine";
+  sub.frequency.setValueAtTime(70, now);
+  sub.frequency.exponentialRampToValueAtTime(28, now + 0.55);
+  subGain.gain.setValueAtTime(0.2, now);
+  subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
+  sub.connect(subGain);
+  subGain.connect(sfx.master);
+  sub.start(now);
+  sub.stop(now + 0.6);
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = sfx.noiseBuffer;
+  const rumble = ctx.createBiquadFilter();
+  rumble.type = "lowpass";
+  rumble.frequency.setValueAtTime(900, now);
+  rumble.frequency.exponentialRampToValueAtTime(140, now + 0.45);
+  const rumbleGain = ctx.createGain();
+  rumbleGain.gain.setValueAtTime(0.32, now);
+  rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+  noise.connect(rumble);
+  rumble.connect(rumbleGain);
+  rumbleGain.connect(sfx.master);
+  noise.start(now);
+  noise.stop(now + 0.52);
+
+  playNoiseBurst(0.08, 0.2, 1600);
 }
 
 function goToTitleScreen() {
@@ -665,10 +898,12 @@ function goToTitleScreen() {
   resetMouse();
   spawnInitialRocks(4);
   startScreen.classList.remove("hidden");
+  if (sfx.ready && !sfx.muted) startTitleMusic();
 }
 
 function beginGame() {
   resumeAudio();
+  fadeTitleMusic();
   if (sfx.muted) setMuted(true);
   waitingToStart = false;
   startScreen.classList.add("hidden");
@@ -688,25 +923,74 @@ function detectInputMode() {
   return isNarrow || hasTouch ? "mobile" : "desktop";
 }
 
-function isFullscreen() {
+function isAppleDevice() {
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function apiFullscreen() {
   return !!(document.fullscreenElement || document.webkitFullscreenElement);
 }
 
-function toggleFullscreen() {
-  if (isFullscreen()) {
+function isFullscreen() {
+  return apiFullscreen() || document.body.classList.contains("screen-expanded");
+}
+
+function enterAppleLayoutFullscreen() {
+  document.body.classList.add("screen-expanded");
+  resizeGame();
+  syncFullscreenButton();
+  const html = document.documentElement;
+  html.classList.add("apple-scroll");
+  window.scrollTo(0, 1);
+  setTimeout(() => {
+    window.scrollTo(0, 0);
+    html.classList.remove("apple-scroll");
+    resizeGame();
+  }, 60);
+}
+
+function leaveFullscreen() {
+  document.body.classList.remove("screen-expanded");
+  document.documentElement.classList.remove("apple-scroll");
+  window.scrollTo(0, 0);
+  if (apiFullscreen()) {
     const exit = document.exitFullscreen || document.webkitExitFullscreen || document.webkitCancelFullScreen;
     if (exit) {
       try { exit.call(document); } catch (err) {}
     }
+  }
+  resizeGame();
+  syncFullscreenButton();
+}
+
+function toggleFullscreen() {
+  if (isFullscreen()) {
+    leaveFullscreen();
     return;
   }
   const root = document.documentElement;
   const request = root.requestFullscreen || root.webkitRequestFullscreen || root.webkitRequestFullScreen;
-  if (!request) return;
+  if (!request) {
+    if (isAppleDevice()) enterAppleLayoutFullscreen();
+    return;
+  }
   try {
     const pending = request.call(root);
-    if (pending && typeof pending.catch === "function") pending.catch(() => {});
-  } catch (err) {}
+    if (pending && typeof pending.then === "function") {
+      pending.then(() => {
+        if (!apiFullscreen() && isAppleDevice()) enterAppleLayoutFullscreen();
+        else syncFullscreenButton();
+      }).catch(() => {
+        if (isAppleDevice()) enterAppleLayoutFullscreen();
+      });
+      return;
+    }
+  } catch (err) {
+    if (isAppleDevice()) enterAppleLayoutFullscreen();
+    return;
+  }
+  if (isAppleDevice() && !apiFullscreen()) enterAppleLayoutFullscreen();
 }
 
 function syncFullscreenButton() {
@@ -719,6 +1003,7 @@ function syncFullscreenButton() {
 
 function resizeGame() {
   inputMode = detectInputMode();
+  document.body.classList.toggle("apple-device", isAppleDevice());
   document.body.classList.toggle("mobile-mode", inputMode === "mobile");
   document.body.classList.toggle("desktop-mode", inputMode === "desktop");
 
@@ -1296,7 +1581,19 @@ function checkShockwaveRockCollisions(ts) {
       }
     }
 
+    for (let s = clusterSeekers.length - 1; s >= 0; s--) {
+      const seeker = clusterSeekers[s];
+      if (wave.hitSet.has(seeker)) continue;
+      const dist = distance(wave.x, wave.y, seeker.x, seeker.y);
+      const touches = wave.radius >= dist - seeker.radius
+        && wave.radius <= dist + seeker.radius + wave.speed * ts;
+      if (!touches) continue;
+      wave.hitSet.add(seeker);
+      popClusterSeeker(s);
+    }
+
     damageBossWithWave(wave, ts);
+    damageBossBulletsWithWave(wave, ts);
   }
 }
 
@@ -1318,7 +1615,8 @@ window.addEventListener("keydown", (e) => {
 
   if (waitingToStart) {
     if (e.code === "Space") beginGame();
-    if (e.code === "Digit1" && !e.repeat) startBossTest();
+    if (e.code === "Digit1" && !e.repeat) startBossTest(5);
+    if (e.code === "Digit2" && !e.repeat) startBossTest(10);
     return;
   }
 
@@ -1337,7 +1635,12 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.code === "Digit1" && !e.repeat) {
-    startBossTest();
+    startBossTest(5);
+    return;
+  }
+
+  if (e.code === "Digit2" && !e.repeat) {
+    startBossTest(10);
     return;
   }
 
@@ -1434,7 +1737,8 @@ function syncPowerupLabel() {
   if (rapidTimer > 0) lines.push("RAPID " + Math.ceil(rapidTimer) + "s");
   if (tripleTimer > 0) lines.push("TRIPLE " + Math.ceil(tripleTimer) + "s");
   if (slowTimer > 0) lines.push("SLOW " + Math.ceil(slowTimer) + "s");
-  if (shieldCharges > 0) lines.push("SHIELD");
+  if (shieldCharges > 1) lines.push("SHIELD 2");
+  else if (shieldCharges > 0) lines.push("SHIELD");
   if (bombCharges > 0) lines.push(bombCharges > 1 ? "BOMB " + bombCharges : "BOMB");
   powerupLabelEl.textContent = lines.join("\n");
   const bombBtn = document.getElementById("bomb-btn");
@@ -1538,6 +1842,9 @@ function separateShipFromHazards() {
         nudgeShipFrom(pos.x, pos.y, CLUSTER_CIRCLE_R + ship.radius - 2);
       }
     }
+    for (const seeker of clusterSeekers) {
+      nudgeShipFrom(seeker.x, seeker.y, seeker.radius + ship.radius - 2);
+    }
     if (boss) {
       for (const circle of boss.circles) {
         if (!bossCircleReady(circle)) continue;
@@ -1562,11 +1869,14 @@ function clearRunHazards() {
   bullets = [];
   shockwaves = [];
   clusters = [];
+  clusterSeekers = [];
   pickups = [];
+  stopAllBombFlightSounds();
   bombs = [];
   bombWaves = [];
   boss = null;
   bossPulses = [];
+  bossBullets = [];
   ufos = [];
   ufoSpawnTimer = 0;
   ufoNextSpawn = rand(UFO_SPAWN_MIN, UFO_SPAWN_MAX);
@@ -1582,7 +1892,7 @@ function hurtShip() {
   addDestroyBurst(ship.x, ship.y, "#fff", 1.3);
 
   if (shieldCharges > 0) {
-    shieldCharges = 0;
+    shieldCharges -= 1;
     scorePopups.push({ x: ship.x, y: ship.y - 16, text: "SHIELD", life: 1 });
     invincibleUntil = performance.now() + 700;
     return;
@@ -1746,20 +2056,133 @@ function pushRockOutOf(rock, other, otherRadius) {
   }
 }
 
+function bodyVelocity(body) {
+  if (body.kind === "seeker") {
+    return { vx: body.vx + body.pushX, vy: body.vy + body.pushY };
+  }
+  if (body.pushX != null) {
+    let speed = 0;
+    if (body.kind === "boss") {
+      if (body.phase === "chase") speed = BOSS_SPEED;
+    } else if (!(body.kind === "cluster2" && body.phase === "pulse")) {
+      speed = clusterSpeed(body);
+    }
+    const angle = speed > 0 ? Math.atan2(ship.y - body.y, ship.x - body.x) : 0;
+    return {
+      vx: Math.cos(angle) * speed + body.pushX,
+      vy: Math.sin(angle) * speed + body.pushY,
+    };
+  }
+  return { vx: body.vx || 0, vy: body.vy || 0 };
+}
+
+function addBodyVelocity(body, dvx, dvy) {
+  if (body.kind === "seeker" || body.pushX != null) {
+    body.pushX += dvx;
+    body.pushY += dvy;
+    return;
+  }
+  body.vx = (body.vx || 0) + dvx;
+  body.vy = (body.vy || 0) + dvy;
+}
+
+function bounceBodies(a, aRadius, b, bRadius) {
+  let dx = b.x - a.x;
+  let dy = b.y - a.y;
+  let dist = Math.hypot(dx, dy);
+  const minDist = aRadius + bRadius;
+  if (dist >= minDist) return;
+  if (dist < 0.01) {
+    const angle = rand(0, Math.PI * 2);
+    dx = Math.cos(angle);
+    dy = Math.sin(angle);
+    dist = 1;
+  }
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const overlap = minDist - dist;
+  a.x -= nx * overlap * 0.5;
+  a.y -= ny * overlap * 0.5;
+  b.x += nx * overlap * 0.5;
+  b.y += ny * overlap * 0.5;
+
+  const va = bodyVelocity(a);
+  const vb = bodyVelocity(b);
+  const velAlongNormal = (vb.vx - va.vx) * nx + (vb.vy - va.vy) * ny;
+  if (velAlongNormal > 0) return;
+
+  const massA = aRadius * aRadius;
+  const massB = bRadius * bRadius;
+  const impulse = (2 * velAlongNormal) / (massA + massB);
+  addBodyVelocity(a, impulse * massB * nx, impulse * massB * ny);
+  addBodyVelocity(b, -impulse * massA * nx, -impulse * massA * ny);
+  if (a.points) reduceRockSpeed(a, ROCK_BOUNCE_DRAG);
+  if (b.points) reduceRockSpeed(b, ROCK_BOUNCE_DRAG);
+}
+
+function pushOutOf(body, bodyRadius, other, otherRadius) {
+  let dx = body.x - other.x;
+  let dy = body.y - other.y;
+  let dist = Math.hypot(dx, dy);
+  const minDist = bodyRadius + otherRadius;
+  if (dist >= minDist) return;
+  if (dist < 0.01) {
+    const angle = rand(0, Math.PI * 2);
+    dx = Math.cos(angle);
+    dy = Math.sin(angle);
+    dist = 1;
+  }
+  const nx = dx / dist;
+  const ny = dy / dist;
+  body.x += nx * (minDist - dist);
+  body.y += ny * (minDist - dist);
+  const vel = bodyVelocity(body);
+  const into = vel.vx * nx + vel.vy * ny;
+  if (into < 0) addBodyVelocity(body, -nx * into, -ny * into);
+}
+
 function separateRocksFromHazards() {
-  for (let pass = 0; pass < 3; pass++) {
+  for (let i = clusterSeekers.length - 1; i >= 0; i--) {
+    const seeker = clusterSeekers[i];
+    for (const rock of rocks) {
+      if (distance(seeker.x, seeker.y, rock.x, rock.y) >= rock.radius + seeker.radius) continue;
+      popClusterSeeker(i);
+      break;
+    }
+  }
+  for (let pass = 0; pass < 4; pass++) {
     for (const ufo of ufos) {
       for (const rock of rocks) pushRockOutOf(rock, ufo, ufo.radius);
+      for (const cluster of clusters) pushOutOf(cluster, cluster.radius, ufo, ufo.radius);
+      for (const seeker of clusterSeekers) pushOutOf(seeker, seeker.radius, ufo, ufo.radius);
+      if (boss) pushOutOf(boss, boss.radius, ufo, ufo.radius);
     }
-    for (const cluster of clusters) {
-      for (const rock of rocks) pushRockOutOf(rock, cluster, cluster.radius);
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i];
+      for (let j = i + 1; j < clusters.length; j++) {
+        const other = clusters[j];
+        bounceBodies(cluster, cluster.radius, other, other.radius);
+      }
+      for (const rock of rocks) bounceBodies(cluster, cluster.radius, rock, rock.radius);
+      for (const seeker of clusterSeekers) bounceBodies(cluster, cluster.radius, seeker, seeker.radius);
+      if (boss) bounceBodies(cluster, cluster.radius, boss, boss.radius);
     }
     if (boss) {
-      for (const rock of rocks) pushRockOutOf(rock, boss, boss.radius);
+      for (const rock of rocks) bounceBodies(boss, boss.radius, rock, rock.radius);
+      for (const seeker of clusterSeekers) bounceBodies(boss, boss.radius, seeker, seeker.radius);
+    }
+    for (let i = 0; i < clusterSeekers.length; i++) {
+      const seeker = clusterSeekers[i];
+      for (let j = i + 1; j < clusterSeekers.length; j++) {
+        bounceBodies(seeker, seeker.radius, clusterSeekers[j], clusterSeekers[j].radius);
+      }
     }
     resolveRockCollisions();
   }
   for (const rock of rocks) wrapPosition(rock);
+  for (const cluster of clusters) wrapPosition(cluster);
+  for (const seeker of clusterSeekers) wrapPosition(seeker);
+  if (boss) wrapPosition(boss);
 }
 
 function rockSpeedScale() {
@@ -1776,7 +2199,9 @@ function spawnRocks(count) {
       y = rand(margin, H - margin);
     } while (distance(x, y, ship.x, ship.y) < 150);
     const rock = createRock(x, y, "large");
-    rock.hidesCluster = Math.random() < CLUSTER_SPAWN_CHANCE;
+    const roll = Math.random();
+    if (roll < CLUSTER2_SPAWN_CHANCE) rock.hidesCluster2 = true;
+    else rock.hidesCluster = roll < CLUSTER2_SPAWN_CHANCE + CLUSTER_SPAWN_CHANCE;
     for (const wave of bombWaves) wave.hitSet.add(rock);
     rocks.push(rock);
   }
@@ -1825,7 +2250,7 @@ function spawnNextWave() {
   const bossWave = wave % 5 === 0;
   beginWaveIntro(
     bossWave ? "WAVE " + wave + " . BOSS" : "WAVE " + wave,
-    bossWave ? BOSS_NAME : "",
+    bossWave ? bossNameForWave(wave) : "",
     bossWave ? "boss" : "rocks"
   );
   syncStageLabel();
@@ -1845,11 +2270,14 @@ function resetArcadeRun(showBanner) {
   pendingWaveEnemies = null;
   scorePopups = [];
   clusters = [];
+  clusterSeekers = [];
   pickups = [];
+  stopAllBombFlightSounds();
   bombs = [];
   bombWaves = [];
   boss = null;
   bossPulses = [];
+  bossBullets = [];
   rockSpeedBonus = 0;
   rapidTimer = 0;
   tripleTimer = 0;
@@ -2330,8 +2758,30 @@ function drawParticles() {
 // --- Circle cluster enemy ---
 const CLUSTER_SPIN = 0.006;
 
-function createCluster(x, y) {
+function createCluster(x, y, kind) {
   const circles = [];
+  if (kind === "cluster2") {
+    for (let i = 0; i < 5; i++) {
+      circles.push({ ring: 1, angle: (i / 5) * Math.PI * 2, r: CLUSTER2_OUTER_R });
+    }
+    circles.push({ ring: 0, angle: 0, r: 0 });
+    return {
+      x,
+      y,
+      pushX: 0,
+      pushY: 0,
+      rot: rand(0, Math.PI * 2),
+      spin: (Math.random() < 0.5 ? -1 : 1) * CLUSTER_SPIN,
+      circles,
+      radius: CLUSTER2_OUTER_R + CLUSTER_CIRCLE_R,
+      grace: 0.7,
+      kind: "cluster2",
+      phase: "pulse",
+      pulsesLeft: 5,
+      pulseTimer: 0.35,
+      pulses: [],
+    };
+  }
   for (let i = 0; i < 8; i++) {
     circles.push({ ring: 2, angle: (i / 8) * Math.PI * 2, r: 27.2 });
   }
@@ -2349,6 +2799,7 @@ function createCluster(x, y) {
     circles,
     radius: 27.2 + CLUSTER_CIRCLE_R,
     grace: 0.7,
+    kind: "cluster",
   };
 }
 
@@ -2387,6 +2838,9 @@ function popClusterCircle(cluster, circleIndex, clusterIndex) {
     screenShake = 8;
     clusters.splice(clusterIndex, 1);
   } else {
+    let reach = 0;
+    for (const remain of cluster.circles) reach = Math.max(reach, remain.r);
+    cluster.radius = reach + CLUSTER_CIRCLE_R;
     addScore(CLUSTER_POP_SCORE, cluster.x, cluster.y);
     playClusterPopSound();
   }
@@ -2420,7 +2874,7 @@ function bulletHitsCluster(bullet) {
 
     for (let c = 0; c < cluster.circles.length; c++) {
       const circle = cluster.circles[c];
-      if (circle.ring !== ring) continue;
+      if (cluster.kind !== "cluster2" && circle.ring !== ring) continue;
       const pos = circleWorldPos(cluster, circle);
       const dist = pointSegmentDistance(pos.x, pos.y, x1, y1, x2, y2);
       if (dist < bestDist) {
@@ -2435,6 +2889,18 @@ function bulletHitsCluster(bullet) {
       popClusterCircle(cluster, bestIndex, i);
       return true;
     }
+  }
+  return false;
+}
+
+function bulletHitsSeeker(bullet) {
+  const x1 = bullet.prevX != null ? bullet.prevX : bullet.x;
+  const y1 = bullet.prevY != null ? bullet.prevY : bullet.y;
+  for (let i = clusterSeekers.length - 1; i >= 0; i--) {
+    const seeker = clusterSeekers[i];
+    if (pointSegmentDistance(seeker.x, seeker.y, x1, y1, bullet.x, bullet.y) > seeker.radius + 8) continue;
+    popClusterSeeker(i);
+    return true;
   }
   return false;
 }
@@ -2460,7 +2926,7 @@ function popCirclesTouchedByShield(cluster, clusterIndex) {
   const reach = shipShieldRadius() + CLUSTER_CIRCLE_R;
   const hits = [];
   cluster.circles.forEach((circle, index) => {
-    if (circle.ring !== ring) return;
+    if (cluster.kind !== "cluster2" && circle.ring !== ring) return;
     const pos = circleWorldPos(cluster, circle);
     if (distance(ship.x, ship.y, pos.x, pos.y) < reach) hits.push(index);
   });
@@ -2472,20 +2938,132 @@ function popCirclesTouchedByShield(cluster, clusterIndex) {
   return true;
 }
 
+function releaseCluster2(cluster) {
+  const cells = cluster.circles;
+  for (let i = 0; i < cells.length; i++) {
+    const pos = circleWorldPos(cluster, cells[i]);
+    let dx = pos.x - cluster.x;
+    let dy = pos.y - cluster.y;
+    let out = Math.atan2(dy, dx);
+    const fromCenter = Math.hypot(dx, dy);
+    if (fromCenter < 4) out = (i / Math.max(1, cells.length)) * Math.PI * 2;
+    const burst = 2.6;
+    clusterSeekers.push({
+      x: cluster.x + Math.cos(out) * (fromCenter + 8),
+      y: cluster.y + Math.sin(out) * (fromCenter + 8),
+      vx: Math.cos(out) * burst,
+      vy: Math.sin(out) * burst,
+      radius: CLUSTER_CIRCLE_R,
+      smoke: rand(0, 0.04),
+      burst: 0.55,
+      pushX: 0,
+      pushY: 0,
+      kind: "seeker",
+    });
+  }
+  const index = clusters.indexOf(cluster);
+  if (index >= 0) clusters.splice(index, 1);
+}
+
+function addSeekerSmoke(seeker) {
+  const travel = Math.atan2(seeker.vy + seeker.pushY, seeker.vx + seeker.pushX);
+  const behind = travel + Math.PI + rand(-0.35, 0.35);
+  const dist = seeker.radius + rand(2, 7);
+  particles.push({
+    x: seeker.x + Math.cos(behind) * dist,
+    y: seeker.y + Math.sin(behind) * dist,
+    vx: Math.cos(behind) * rand(0.2, 0.7) - seeker.vx * 0.1,
+    vy: Math.sin(behind) * rand(0.2, 0.7) - seeker.vy * 0.1,
+    life: 1,
+    decay: rand(0.02, 0.04),
+    size: rand(1, 2.2),
+    type: "smoke",
+  });
+}
+
+function updateClusterSeekers(dt) {
+  const ts = timeScale(dt);
+  for (const seeker of clusterSeekers) {
+    if (seeker.burst > 0) seeker.burst -= dt;
+    const aim = Math.atan2(ship.y - seeker.y, ship.x - seeker.x);
+    const desiredX = Math.cos(aim) * CLUSTER2_SPEED;
+    const desiredY = Math.sin(aim) * CLUSTER2_SPEED;
+    const turn = seeker.burst > 0 ? 0.03 : 0.08;
+    seeker.vx += (desiredX - seeker.vx) * turn * ts;
+    seeker.vy += (desiredY - seeker.vy) * turn * ts;
+    let speed = Math.hypot(seeker.vx, seeker.vy);
+    const cap = seeker.burst > 0 ? 2.8 : CLUSTER2_SPEED;
+    const floor = seeker.burst > 0 ? 1.2 : CLUSTER2_SPEED;
+    if (speed < 0.01) {
+      seeker.vx = desiredX;
+      seeker.vy = desiredY;
+      speed = CLUSTER2_SPEED;
+    }
+    if (speed > cap) {
+      seeker.vx = (seeker.vx / speed) * cap;
+      seeker.vy = (seeker.vy / speed) * cap;
+    } else if (speed < floor) {
+      seeker.vx = (seeker.vx / speed) * floor;
+      seeker.vy = (seeker.vy / speed) * floor;
+    }
+    const decay = Math.pow(0.96, ts);
+    seeker.pushX *= decay;
+    seeker.pushY *= decay;
+    seeker.x += (seeker.vx + seeker.pushX) * ts;
+    seeker.y += (seeker.vy + seeker.pushY) * ts;
+    wrapPosition(seeker);
+    seeker.smoke += dt;
+    if (seeker.smoke >= 0.05) {
+      seeker.smoke = 0;
+      addSeekerSmoke(seeker);
+    }
+  }
+}
+
+function popClusterSeeker(index) {
+  const seeker = clusterSeekers[index];
+  if (!seeker) return;
+  addSplashBurst(seeker.x, seeker.y, CLUSTER_CIRCLE_R * 1.4, 12, "#ff3333");
+  addScore(CLUSTER_POP_SCORE, seeker.x, seeker.y);
+  playClusterPopSound();
+  clusterSeekers.splice(index, 1);
+}
+
 function updateClusters(dt) {
   const ts = timeScale(dt);
   const decay = Math.pow(0.96, ts);
-  for (const cluster of clusters) {
+  for (let i = clusters.length - 1; i >= 0; i--) {
+    const cluster = clusters[i];
     if (cluster.grace > 0) cluster.grace -= dt;
     cluster.rot += cluster.spin * ts;
     cluster.pushX *= decay;
     cluster.pushY *= decay;
+    if (cluster.kind === "cluster2" && cluster.phase === "pulse") {
+      for (let p = cluster.pulses.length - 1; p >= 0; p--) {
+        cluster.pulses[p].radius += 2.4 * ts;
+        if (cluster.pulses[p].radius >= cluster.pulses[p].max) cluster.pulses.splice(p, 1);
+      }
+      cluster.x += cluster.pushX * ts;
+      cluster.y += cluster.pushY * ts;
+      wrapPosition(cluster);
+      cluster.pulseTimer -= dt;
+      if (cluster.pulseTimer > 0) continue;
+      cluster.pulses.push({ radius: 6, max: cluster.radius + 40 });
+      cluster.pulsesLeft -= 1;
+      if (cluster.pulsesLeft <= 0) {
+        releaseCluster2(cluster);
+        continue;
+      }
+      cluster.pulseTimer = CLUSTER2_PULSE_GAP;
+      continue;
+    }
     const angle = Math.atan2(ship.y - cluster.y, ship.x - cluster.x);
     const speed = clusterSpeed(cluster);
     cluster.x += (Math.cos(angle) * speed + cluster.pushX) * ts;
     cluster.y += (Math.sin(angle) * speed + cluster.pushY) * ts;
     wrapPosition(cluster);
   }
+  updateClusterSeekers(dt);
 }
 
 function livingCellScale(angle, ring) {
@@ -2502,6 +3080,15 @@ function drawClusters() {
   ctx.strokeStyle = "#ff3333";
   ctx.lineWidth = 2;
   for (const cluster of clusters) {
+    if (cluster.pulses) {
+      for (const pulse of cluster.pulses) {
+        ctx.globalAlpha = Math.max(0.25, 1 - pulse.radius / pulse.max);
+        ctx.beginPath();
+        ctx.arc(cluster.x, cluster.y, pulse.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
     for (const circle of cluster.circles) {
       const pos = circleWorldPos(cluster, circle);
       ctx.beginPath();
@@ -2511,17 +3098,41 @@ function drawClusters() {
   }
 }
 
-// --- Wave boss (same form for every 5th wave) ---
+function drawClusterSeekers() {
+  ctx.strokeStyle = "#ff3333";
+  ctx.lineWidth = 2;
+  for (const seeker of clusterSeekers) {
+    ctx.beginPath();
+    ctx.arc(seeker.x, seeker.y, seeker.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// --- Wave boss (wave 5 form, wave 10 adds three shell rings and a throw) ---
 const BOSS_SPEED = 0.32;
 const BOSS_SPIN = 0.008;
 const BOSS_BOMB_REACH = 58;
+const BOSS_SHOT_INTERVAL = 4;
+const BOSS_SHOT_WARN = 0.7;
+const BOSS_SHOT_ARC = (80 * Math.PI) / 180;
+const BOSS_BULLET_SPEED = 2.8;
+const BOSS_DEATH_SHAKE = 0.9;
+
+function bossNameForWave(waveNumber) {
+  return waveNumber % 10 === 0 ? W10_BOSS_NAME : BOSS_NAME;
+}
+
+function angleDiff(a, b) {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
 
 function bossCircleReady(circle) {
   return circle.alive && circle.appearDelay <= 0 && circle.grow > 0.2;
 }
 
-function createBoss(x, y) {
+function createBoss(x, y, variant) {
   const circles = [];
+  const shellLayers = variant === "w10" ? 8 : 5;
   const coreLayers = [
     { ring: 0, count: 1, r: 0 },
     { ring: 1, count: 5, r: 14.4 },
@@ -2541,7 +3152,7 @@ function createBoss(x, y) {
     }
   }
   let outer = 27.2;
-  for (let layer = 0; layer < 5; layer++) {
+  for (let layer = 0; layer < shellLayers; layer++) {
     const r = 40 + layer * 13;
     outer = r;
     const count = Math.max(12, Math.round((Math.PI * 2 * r) / 15));
@@ -2563,27 +3174,44 @@ function createBoss(x, y) {
     rot: rand(0, Math.PI * 2),
     radius: outer + CLUSTER_CIRCLE_R,
     circles,
+    variant: variant === "w10" ? "w10" : "w5",
     phase: "chase",
     pulseTimer: 0,
     pulsesLeft: 0,
     needsRebuild: false,
     rebuilds: 0,
+    coreRebuilds: 0,
     coreTotal: 14,
     shellTotal: circles.filter((circle) => !circle.core).length,
+    attackTimer: BOSS_SHOT_INTERVAL,
+    attackPhase: "idle",
+    attackTime: 0,
+    shake: 0,
+    attackCircles: [],
+    pushX: 0,
+    pushY: 0,
+    kind: "boss",
+    tremorX: 0,
+    tremorY: 0,
+    tremorVX: 0,
+    tremorVY: 0,
+    kickWait: 0,
   };
 }
 
 function spawnBoss() {
+  const variant = wave % 10 === 0 ? "w10" : "w5";
   const side = Math.floor(rand(0, 4));
-  const pad = 110;
+  const pad = variant === "w10" ? 170 : 110;
   let x = rand(pad, W - pad);
   let y = rand(pad, H - pad);
   if (side === 0) y = -pad;
   else if (side === 1) x = W + pad;
   else if (side === 2) y = H + pad;
   else x = -pad;
-  boss = createBoss(x, y);
+  boss = createBoss(x, y, variant);
   bossPulses = [];
+  bossBullets = [];
   syncStageLabel();
 }
 
@@ -2604,15 +3232,20 @@ function bossShellAlive() {
 }
 
 function bossRebuildReady() {
-  if (boss.rebuilds < 1) return bossCoreAlive() < boss.coreTotal * 0.5;
-  return bossShellAlive() < boss.shellTotal * 0.5;
+  const coreLow = bossCoreAlive() < boss.coreTotal * 0.5;
+  const shellsLow = bossShellAlive() < boss.shellTotal * 0.5;
+  if (boss.variant === "w10") {
+    return (boss.coreRebuilds < 1 && coreLow) || shellsLow;
+  }
+  if (boss.rebuilds < 1) return coreLow;
+  return shellsLow;
 }
 
 function randomPickupType() {
-  const types = ["rapid", "slow", "shield", "bomb", "triple"];
+  const types = ["rapid", "slow", "shield", "doubleShield", "bomb", "triple"];
   let type = types[Math.floor(Math.random() * types.length)];
   if (wave % 5 === 0 && type === "bomb" && Math.random() < 0.7) {
-    type = ["rapid", "slow", "shield", "triple"][Math.floor(Math.random() * 4)];
+    type = ["rapid", "slow", "shield", "doubleShield", "triple"][Math.floor(Math.random() * 5)];
   }
   return type;
 }
@@ -2660,28 +3293,54 @@ function dropBossPickup(x, y) {
 function defeatBoss() {
   if (!boss) return;
   addScore(1000, boss.x, boss.y, "BOSS +1000");
-  addSplashBurst(boss.x, boss.y, boss.radius * 0.45, 36, "#ff3333");
   playClusterClearSound();
   screenShake = 14;
   boss = null;
   bossPulses = [];
+  bossBullets = [];
   syncStageLabel();
   beginWaveIntro("WAVE " + wave + " . BOSS", "DEFEATED", "afterBoss");
 }
 
+function beginBossCollapse() {
+  if (!boss || boss.phase === "collapse") return;
+  cancelBossAttack();
+  boss.phase = "collapse";
+  boss.needsRebuild = false;
+  boss.collapseShake = BOSS_DEATH_SHAKE;
+  boss.collapseTimer = BOSS_DEATH_SHAKE;
+  boss.tremorX = 0;
+  boss.tremorY = 0;
+  playBossDeathSound();
+}
+
 function popBossCircle(circle) {
   if (!boss || !circle.alive) return;
+  const collapsing = boss.phase === "collapse";
   const pos = circleWorldPos(boss, circle);
   circle.alive = false;
   circle.grow = 0;
   circle.appearDelay = 0;
+  circle.charging = false;
   addSplashBurst(pos.x, pos.y, CLUSTER_CIRCLE_R * 1.3, circle.core ? 14 : 8, "#ff3333");
-  addScore(circle.core ? 40 : 20, pos.x, pos.y);
-  playClusterPopSound();
-  dropBossPickup(pos.x, pos.y);
+  if (!collapsing) {
+    addScore(circle.core ? 40 : 20, pos.x, pos.y);
+    playClusterPopSound();
+    dropBossPickup(pos.x, pos.y);
+  } else {
+    playClusterPopSound();
+  }
   if (!boss) return;
+  if (collapsing) {
+    let any = false;
+    for (const remain of boss.circles) {
+      if (remain.alive) any = true;
+    }
+    if (!any) defeatBoss();
+    return;
+  }
   if (bossCoreAlive() === 0) {
-    defeatBoss();
+    beginBossCollapse();
     return;
   }
   if (boss.phase === "chase" && bossRebuildReady()) {
@@ -2689,8 +3348,134 @@ function popBossCircle(circle) {
   }
 }
 
+function cancelBossAttack() {
+  if (!boss) return;
+  for (const circle of boss.attackCircles) circle.charging = false;
+  boss.attackPhase = "idle";
+  boss.attackTime = 0;
+  boss.shake = 0;
+  boss.attackCircles = [];
+}
+
+function circleOnOuterEdge(circle, shells) {
+  for (const other of shells) {
+    if (other === circle || other.r <= circle.r) continue;
+    const cover = (15 / other.r) * 0.55;
+    if (angleDiff(circle.angle, other.angle) <= cover) return false;
+  }
+  return true;
+}
+
+function beginBossWindup() {
+  const aim = Math.atan2(ship.y - boss.y, ship.x - boss.x);
+  const shells = [];
+  for (const circle of boss.circles) {
+    if (!circle.core && bossCircleReady(circle)) shells.push(circle);
+  }
+  const chosen = [];
+  for (const circle of shells) {
+    if (angleDiff(circle.angle + boss.rot, aim) > BOSS_SHOT_ARC / 2) continue;
+    if (!circleOnOuterEdge(circle, shells)) continue;
+    circle.charging = true;
+    chosen.push(circle);
+  }
+  if (chosen.length === 0) {
+    boss.attackTimer = 1.5;
+    return;
+  }
+  boss.attackPhase = "windup";
+  boss.attackTime = 0;
+  boss.shake = 0;
+  boss.attackCircles = chosen;
+}
+
+function releaseBossShot() {
+  for (const circle of boss.attackCircles) {
+    if (!boss || !bossCircleReady(circle)) continue;
+    const pos = circleWorldPos(boss, circle);
+    const world = circle.angle + boss.rot;
+    bossBullets.push({
+      x: pos.x,
+      y: pos.y,
+      vx: Math.cos(world) * BOSS_BULLET_SPEED,
+      vy: Math.sin(world) * BOSS_BULLET_SPEED,
+      radius: CLUSTER_CIRCLE_R,
+    });
+    circle.alive = false;
+    circle.grow = 0;
+    circle.appearDelay = 0;
+  }
+  cancelBossAttack();
+  if (boss && boss.phase === "chase") boss.attackTimer = BOSS_SHOT_INTERVAL;
+  if (boss && boss.phase === "chase" && bossRebuildReady()) boss.needsRebuild = true;
+}
+
+function updateBossTremor(dt) {
+  const shake = boss.attackPhase === "windup" ? boss.shake : 0;
+  boss.kickWait -= dt;
+  if (shake > 0 && boss.kickWait <= 0) {
+    const kick = (1.4 + shake * shake * 11) * rand(0.55, 1.35);
+    const ang = rand(0, Math.PI * 2);
+    boss.tremorVX += Math.cos(ang) * kick;
+    boss.tremorVY += Math.sin(ang) * kick;
+    boss.kickWait = Math.max(0.016, 0.07 - shake * 0.055);
+  }
+  boss.tremorVX += -boss.tremorX * 0.42;
+  boss.tremorVY += -boss.tremorY * 0.42;
+  boss.tremorVX *= 0.74;
+  boss.tremorVY *= 0.74;
+  boss.tremorX += boss.tremorVX * timeScale(dt) * 0.22;
+  boss.tremorY += boss.tremorVY * timeScale(dt) * 0.22;
+  const cap = 2 + shake * 8;
+  boss.tremorX = Math.max(-cap, Math.min(cap, boss.tremorX));
+  boss.tremorY = Math.max(-cap, Math.min(cap, boss.tremorY));
+  if (shake === 0) {
+    boss.tremorX *= 0.8;
+    boss.tremorY *= 0.8;
+  }
+}
+
+function updateBossAttack(dt) {
+  if (boss.attackPhase === "idle") {
+    boss.attackTimer -= dt;
+    if (boss.attackTimer <= 0) beginBossWindup();
+    return;
+  }
+  boss.attackTime += dt;
+  const t = Math.min(1, boss.attackTime / BOSS_SHOT_WARN);
+  boss.shake = t * t;
+  if (boss.attackTime >= BOSS_SHOT_WARN) releaseBossShot();
+}
+
+function updateBossBullets(dt) {
+  const ts = timeScale(dt);
+  for (let i = bossBullets.length - 1; i >= 0; i--) {
+    const bullet = bossBullets[i];
+    bullet.x += bullet.vx * ts;
+    bullet.y += bullet.vy * ts;
+    const off = bullet.x < -bullet.radius || bullet.x > W + bullet.radius
+      || bullet.y < -bullet.radius || bullet.y > H + bullet.radius;
+    if (off) bossBullets.splice(i, 1);
+  }
+}
+
+function damageBossBulletsWithWave(wave, ts) {
+  for (let i = bossBullets.length - 1; i >= 0; i--) {
+    const bullet = bossBullets[i];
+    if (wave.hitSet.has(bullet)) continue;
+    const dist = distance(wave.x, wave.y, bullet.x, bullet.y);
+    const touches = wave.radius >= dist - bullet.radius
+      && wave.radius <= dist + bullet.radius + wave.speed * ts;
+    if (!touches) continue;
+    wave.hitSet.add(bullet);
+    addSplashBurst(bullet.x, bullet.y, bullet.radius * 1.4, 6, "#ff3333");
+    bossBullets.splice(i, 1);
+  }
+}
+
 function beginBossFill() {
   if (!boss) return;
+  cancelBossAttack();
   boss.phase = "fill";
   const missing = boss.circles.filter((circle) => !circle.core && !circle.alive);
   missing.sort((a, b) => a.ring - b.ring || a.angle - b.angle);
@@ -2738,24 +3523,82 @@ function updateBossPulses(dt) {
   }
 }
 
+function updateBossCollapse(dt) {
+  boss.rot += BOSS_SPIN * 0.4 * timeScale(dt);
+  if (boss.collapseShake > 0) {
+    boss.collapseShake -= dt;
+    const build = 1 - Math.max(0, boss.collapseShake / BOSS_DEATH_SHAKE);
+    const shaped = build * build;
+    const amp = 0.8 + shaped * 18;
+    const rate = 0.045 + shaped * 0.16;
+    const t = performance.now();
+    boss.tremorX = Math.sin(t * rate) * amp + Math.sin(t * rate * 2.7) * amp * 0.28;
+    boss.tremorY = Math.sin(t * rate * 1.43 + 0.8) * amp * 0.72;
+    if (boss.collapseShake > 0) return;
+    boss.tremorX = 0;
+    boss.tremorY = 0;
+    boss.collapseTimer = 0.04;
+  }
+  boss.collapseTimer -= dt;
+  if (boss.collapseTimer > 0) return;
+  const living = [];
+  for (const circle of boss.circles) {
+    if (circle.alive) living.push(circle);
+  }
+  if (living.length === 0) {
+    defeatBoss();
+    return;
+  }
+  const batch = Math.min(living.length, living.length > 36 ? 2 : 1);
+  for (let n = 0; n < batch; n++) {
+    const pool = [];
+    for (const circle of boss.circles) {
+      if (circle.alive) pool.push(circle);
+    }
+    if (pool.length === 0 || !boss) break;
+    popBossCircle(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  if (!boss) return;
+  boss.collapseTimer = 0.04 + Math.random() * 0.05;
+}
+
 function updateBoss(dt) {
   updateBossPulses(dt);
+  updateBossBullets(dt);
   if (!boss) return;
   const ts = timeScale(dt);
+  const decay = Math.pow(0.96, ts);
+  boss.pushX *= decay;
+  boss.pushY *= decay;
 
+  if (boss.phase === "collapse") {
+    boss.x += boss.pushX * ts;
+    boss.y += boss.pushY * ts;
+    wrapPosition(boss);
+    updateBossCollapse(dt);
+    return;
+  }
+
+  updateBossTremor(dt);
   if (boss.phase === "chase") {
-    boss.rot += BOSS_SPIN * ts;
+    if (boss.attackPhase !== "windup") boss.rot += BOSS_SPIN * ts;
     const angle = Math.atan2(ship.y - boss.y, ship.x - boss.x);
-    boss.x += Math.cos(angle) * BOSS_SPEED * ts;
-    boss.y += Math.sin(angle) * BOSS_SPEED * ts;
+    boss.x += (Math.cos(angle) * BOSS_SPEED + boss.pushX) * ts;
+    boss.y += (Math.sin(angle) * BOSS_SPEED + boss.pushY) * ts;
     wrapPosition(boss);
     if (boss.needsRebuild && bossRebuildReady()) {
+      cancelBossAttack();
       boss.phase = "pulse";
       boss.pulsesLeft = 5;
       boss.pulseTimer = 0;
       boss.needsRebuild = false;
+    } else if (boss.variant === "w10") {
+      updateBossAttack(dt);
     }
   } else if (boss.phase === "pulse") {
+    boss.x += boss.pushX * ts;
+    boss.y += boss.pushY * ts;
+    wrapPosition(boss);
     boss.pulseTimer += dt;
     if (boss.pulseTimer >= 1) {
       boss.pulseTimer -= 1;
@@ -2771,6 +3614,9 @@ function updateBoss(dt) {
       if (boss.pulsesLeft <= 0) beginBossFill();
     }
   } else if (boss.phase === "fill") {
+    boss.x += boss.pushX * ts;
+    boss.y += boss.pushY * ts;
+    wrapPosition(boss);
     let waiting = false;
     for (const circle of boss.circles) {
       if (!circle.alive || circle.grow >= 1) continue;
@@ -2785,6 +3631,8 @@ function updateBoss(dt) {
     if (!waiting) {
       boss.phase = "chase";
       boss.rebuilds += 1;
+      if (boss.variant === "w10" && bossCoreAlive() < boss.coreTotal * 0.5) boss.coreRebuilds = 1;
+      boss.attackTimer = BOSS_SHOT_INTERVAL;
       if (bossRebuildReady()) boss.needsRebuild = true;
     }
   }
@@ -2837,7 +3685,7 @@ function damageBossWithWave(wave, ts, reach) {
 }
 
 function shieldHitsBoss() {
-  if (!boss || shieldCharges <= 0) return false;
+  if (!boss || boss.phase === "collapse" || shieldCharges <= 0) return false;
   const reach = shipShieldRadius() + CLUSTER_CIRCLE_R;
   const hits = [];
   for (const circle of boss.circles) {
@@ -2854,7 +3702,7 @@ function shieldHitsBoss() {
 }
 
 function shipHitsBoss() {
-  if (!boss) return false;
+  if (!boss || boss.phase === "collapse") return false;
   for (const circle of boss.circles) {
     if (!bossCircleReady(circle)) continue;
     const pos = circleWorldPos(boss, circle);
@@ -2873,18 +3721,31 @@ function drawBoss() {
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
+  for (const bullet of bossBullets) {
+    ctx.strokeStyle = "#ff3333";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   if (!boss) return;
   ctx.save();
-  ctx.translate(boss.x, boss.y);
+  ctx.translate(boss.x + boss.tremorX, boss.y + boss.tremorY);
   ctx.rotate(boss.rot);
   ctx.lineWidth = 2;
+  const strain = boss.shake || 0;
   for (const circle of boss.circles) {
     if (!circle.alive || circle.appearDelay > 0 || circle.core) continue;
     const scale = Math.max(0.05, circle.grow) * livingCellScale(circle.angle, circle.ring);
-    ctx.globalAlpha = 0.4 + 0.6 * circle.grow;
-    ctx.strokeStyle = circle.grow < 1 ? "#ff8888" : "#ff3333";
+    const pull = circle.charging ? 6.5 : 1.4;
+    const flex = Math.sin(circle.angle * 9 + performance.now() * 0.02) * strain * (circle.charging ? 1.6 : 0.45);
+    const ox = Math.cos(circle.angle) * (strain * pull + flex);
+    const oy = Math.sin(circle.angle) * (strain * pull + flex);
+    ctx.globalAlpha = circle.charging ? 1 : 0.4 + 0.6 * circle.grow;
+    ctx.strokeStyle = circle.charging ? "#ffb3b3" : circle.grow < 1 ? "#ff8888" : "#ff3333";
+    ctx.lineWidth = circle.charging ? 2.75 : 2;
     ctx.beginPath();
-    ctx.arc(Math.cos(circle.angle) * circle.r, Math.sin(circle.angle) * circle.r, CLUSTER_CIRCLE_R * scale, 0, Math.PI * 2);
+    ctx.arc(Math.cos(circle.angle) * circle.r + ox, Math.sin(circle.angle) * circle.r + oy, CLUSTER_CIRCLE_R * scale, 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.globalAlpha = 1;
@@ -2912,9 +3773,14 @@ function collectPickup() {
     const item = pickups[i];
     if (distance(ship.x, ship.y, item.x, item.y) > item.radius + ship.radius) continue;
     pickups.splice(i, 1);
-    if (item.type === "shield") {
-      shieldCharges = 1;
-      scorePopups.push({ x: ship.x, y: ship.y - 18, text: "SHIELD", life: 1 });
+    if (item.type === "shield" || item.type === "doubleShield") {
+      shieldCharges = Math.max(shieldCharges, item.type === "doubleShield" ? 2 : 1);
+      scorePopups.push({
+        x: ship.x,
+        y: ship.y - 18,
+        text: item.type === "doubleShield" ? "SHIELD 2" : "SHIELD",
+        life: 1,
+      });
       continue;
     }
     if (item.type === "bomb") {
@@ -2980,6 +3846,14 @@ function drawPickupIcon(type) {
     ctx.lineTo(9, 8);
     ctx.lineTo(-9, 8);
     ctx.closePath();
+  } else if (type === "doubleShield") {
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.moveTo(7, 0);
+    ctx.arc(0, 0, 7, 0, Math.PI * 2);
+    ctx.moveTo(-4.8, 0);
+    ctx.lineTo(4.8, 0);
+    ctx.moveTo(0, -4.8);
+    ctx.lineTo(0, 4.8);
   } else {
     ctx.arc(0, 0, 10, 0, Math.PI * 2);
     ctx.moveTo(-6, 0);
@@ -3085,9 +3959,10 @@ function drawLives() {
   }
 }
 
-function startBossTest() {
+function startBossTest(which) {
+  const waveNumber = which === 10 ? 10 : 5;
   if (gameOver) return;
-  if (bossDebug) {
+  if (waveNumber === 5 && bossDebug) {
     bossDebug = false;
     syncStageLabel();
     return;
@@ -3095,17 +3970,20 @@ function startBossTest() {
   if (waitingToStart) beginGame();
   rocks = [];
   clusters = [];
+  clusterSeekers = [];
   bullets = [];
+  stopAllBombFlightSounds();
   bombs = [];
   bombWaves = [];
   ufos = [];
   stopAllUfoSounds();
   boss = null;
   bossPulses = [];
-  wave = 5;
+  bossBullets = [];
+  wave = waveNumber;
   shockwaveUsedThisWave = false;
   bossDebug = true;
-  beginWaveIntro("WAVE " + wave + " . BOSS", BOSS_NAME, "boss");
+  beginWaveIntro("WAVE " + wave + " . BOSS", bossNameForWave(wave), "boss");
   syncStageLabel();
 }
 
@@ -3222,6 +4100,7 @@ function launchClusterBomb() {
     radius: 7,
   });
   playBombLaunchSound();
+  startBombFlightSound(bombs[bombs.length - 1]);
 }
 
 function bombHitsObject(bomb) {
@@ -3257,7 +4136,7 @@ function detonateBomb(bomb) {
     hitSet: new WeakSet(),
   });
   screenShake = 10;
-  playShockwaveSound();
+  playBombExplodeSound();
 }
 
 function destroyClusterAt(index) {
@@ -3294,6 +4173,7 @@ function pushShipFromBombWave(wave) {
 function applyBombWave(wave, ts) {
   pushShipFromBombWave(wave);
   damageBossWithWave(wave, ts, BOSS_BOMB_REACH);
+  damageBossBulletsWithWave(wave, ts);
   for (let j = rocks.length - 1; j >= 0; j--) {
     const rock = rocks[j];
     if (wave.hitSet.has(rock)) continue;
@@ -3337,6 +4217,17 @@ function applyBombWave(wave, ts) {
     wave.hitSet.add(cluster);
     destroyClusterAt(c);
   }
+
+  for (let s = clusterSeekers.length - 1; s >= 0; s--) {
+    const seeker = clusterSeekers[s];
+    if (wave.hitSet.has(seeker)) continue;
+    const dist = distance(wave.x, wave.y, seeker.x, seeker.y);
+    const touches = wave.radius >= dist - seeker.radius
+      && wave.radius <= dist + seeker.radius + wave.speed * ts;
+    if (!touches) continue;
+    wave.hitSet.add(seeker);
+    popClusterSeeker(s);
+  }
 }
 
 function updateBombs(dt) {
@@ -3356,6 +4247,7 @@ function updateBombs(dt) {
     else if (bomb.y > H) bomb.y -= H;
     addBombSmoke(bomb);
     if (bomb.traveled >= BOMB_RANGE || bombHitsObject(bomb)) {
+      stopBombFlightSound(bomb);
       detonateBomb(bomb);
       bombs.splice(i, 1);
     }
@@ -3617,6 +4509,11 @@ function drawShip() {
     ctx.strokeStyle = "#4da3ff";
     ctx.beginPath();
     ctx.arc(ship.x, ship.y, shipShieldRadius(), 0, Math.PI * 2);
+    if (shieldCharges > 1) {
+      const inner = shipShieldRadius() - 5;
+      ctx.moveTo(ship.x + inner, ship.y);
+      ctx.arc(ship.x, ship.y, inner, 0, Math.PI * 2);
+    }
     ctx.stroke();
     ctx.strokeStyle = "#fff";
   }
@@ -3655,7 +4552,15 @@ function drawRocks() {
     }
     ctx.closePath();
     ctx.stroke();
-    if (rock.hidesCluster) {
+    if (rock.hidesCluster2) {
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(0, 0, rock.radius * 0.42, 0, Math.PI * 2);
+      ctx.moveTo(2.2, 0);
+      ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (rock.hidesCluster) {
       ctx.setLineDash([3, 4]);
       ctx.beginPath();
       ctx.arc(0, 0, rock.radius * 0.48, 0, Math.PI * 2);
@@ -3702,8 +4607,9 @@ function breakRock(rock, index) {
   if (rock.size === "large") {
     screenShake = 16;
     let cluster = null;
-    if (rock.hidesCluster) {
-      cluster = createCluster(x, y);
+    if (rock.hidesCluster2) cluster = createCluster(x, y, "cluster2");
+    else if (rock.hidesCluster) cluster = createCluster(x, y);
+    if (cluster) {
       clusters.push(cluster);
       clearSpawnFromShip(cluster);
     }
@@ -3762,10 +4668,21 @@ function checkCollisions() {
     }
     if (hit) continue;
 
-    if (bulletHitsCluster(b) || bulletHitsBoss(b)) {
+    if (bulletHitsCluster(b) || bulletHitsBoss(b) || bulletHitsSeeker(b)) {
       bullets.splice(i, 1);
       continue;
     }
+
+    for (let n = bossBullets.length - 1; n >= 0; n--) {
+      const shot = bossBullets[n];
+      if (distance(b.x, b.y, shot.x, shot.y) >= shot.radius + 2) continue;
+      bullets.splice(i, 1);
+      addSplashBurst(shot.x, shot.y, shot.radius * 1.4, 6, "#ff3333");
+      bossBullets.splice(n, 1);
+      hit = true;
+      break;
+    }
+    if (hit) continue;
 
     for (let k = ufos.length - 1; k >= 0; k--) {
       const ufo = ufos[k];
@@ -3783,6 +4700,18 @@ function checkCollisions() {
 
   if (!shipCanBeHit()) {
     separateShipFromHazards();
+    for (let i = bossBullets.length - 1; i >= 0; i--) {
+      const bullet = bossBullets[i];
+      if (distance(ship.x, ship.y, bullet.x, bullet.y) < bullet.radius + ship.radius) {
+        bossBullets.splice(i, 1);
+      }
+    }
+    for (let s = clusterSeekers.length - 1; s >= 0; s--) {
+      const seeker = clusterSeekers[s];
+      if (distance(ship.x, ship.y, seeker.x, seeker.y) < seeker.radius + ship.radius) {
+        clusterSeekers.splice(s, 1);
+      }
+    }
     return;
   }
 
@@ -3819,6 +4748,22 @@ function checkCollisions() {
     return;
   }
   if (shipHitsBoss()) {
+    hurtShip();
+    return;
+  }
+
+  for (let i = bossBullets.length - 1; i >= 0; i--) {
+    const bullet = bossBullets[i];
+    if (distance(ship.x, ship.y, bullet.x, bullet.y) >= bullet.radius + ship.radius - 2) continue;
+    bossBullets.splice(i, 1);
+    hurtShip();
+    return;
+  }
+
+  for (let s = clusterSeekers.length - 1; s >= 0; s--) {
+    const seeker = clusterSeekers[s];
+    if (distance(ship.x, ship.y, seeker.x, seeker.y) >= seeker.radius + ship.radius - 2) continue;
+    popClusterSeeker(s);
     hurtShip();
     return;
   }
@@ -4058,6 +5003,7 @@ function draw() {
     drawBullets();
     drawBombs();
     drawParticles();
+    drawClusterSeekers();
     drawShockwaves();
     drawBombWaves();
     if (!shipBreakActive) drawShip();
@@ -4079,6 +5025,7 @@ function update(currentTime) {
   const dt = Math.min((currentTime - lastFrameTime) / 1000, MAX_DELTA_TIME);
   lastFrameTime = currentTime;
   updateStars(dt);
+  scheduleTitleMusic();
 
   if (!waitingToStart && !gameOver) {
     if (!shipBreakActive) updateShip(dt);
@@ -4144,6 +5091,7 @@ function resetGame() {
   screenShake = 0;
   particles = [];
   bullets = [];
+  stopAllBombFlightSounds();
   bombs = [];
   bombWaves = [];
   ship.x = W / 2;
@@ -4179,13 +5127,18 @@ setupDesktopMouseControls();
 window.addEventListener("resize", resizeGame);
 window.addEventListener("orientationchange", () => setTimeout(resizeGame, 80));
 document.addEventListener("fullscreenchange", () => {
+  if (!apiFullscreen()) document.body.classList.remove("screen-expanded");
   resizeGame();
   syncFullscreenButton();
 });
 document.addEventListener("webkitfullscreenchange", () => {
+  if (!apiFullscreen()) document.body.classList.remove("screen-expanded");
   resizeGame();
   syncFullscreenButton();
 });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", resizeGame);
+}
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("touchstart", (e) => {
   if (e.target.closest && e.target.closest("#mobile-controls, #game")) e.preventDefault();

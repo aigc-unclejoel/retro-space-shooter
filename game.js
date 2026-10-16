@@ -48,6 +48,7 @@ let waveBanner = 0;
 let waveBannerDuration = 1;
 let waveBannerText = "WAVE 1";
 let waveBannerSub = "";
+let controlsFadeAt = 0;
 let pendingWaveEnemies = null;
 const BOSS_NAME = "CRIMSON NUCLEUS";
 let scorePopups = [];
@@ -182,6 +183,7 @@ const sfx = {
   ufoChaseActive: false,
   muted: false,
   volume: 0.864,
+  primed: false,
   ready: false,
 };
 
@@ -448,9 +450,18 @@ function silenceGameAudio() {
 
 function resumeAudio() {
   initAudio();
-  if (sfx.ctx.state === "suspended") {
-    sfx.ctx.resume();
-  }
+  const ctx = sfx.ctx;
+  if (ctx.state !== "running") ctx.resume();
+  if (sfx.primed) return;
+  const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const gain = ctx.createGain();
+  gain.gain.value = 0.0001;
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  try { src.start(0); } catch (err) {}
+  sfx.primed = true;
 }
 
 function setMuted(muted) {
@@ -662,7 +673,12 @@ function beginGame() {
   waitingToStart = false;
   startScreen.classList.add("hidden");
   resetGame();
-  playStartSound();
+  const play = () => playStartSound();
+  if (!sfx.ctx || sfx.ctx.state === "running") play();
+  else {
+    const pending = sfx.ctx.resume();
+    if (pending && typeof pending.then === "function") pending.then(play).catch(() => {});
+  }
 }
 
 // --- Input mode detection & responsive layout ---
@@ -670,6 +686,35 @@ function detectInputMode() {
   const isNarrow = window.innerWidth <= 768;
   const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
   return isNarrow || hasTouch ? "mobile" : "desktop";
+}
+
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function toggleFullscreen() {
+  if (isFullscreen()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen || document.webkitCancelFullScreen;
+    if (exit) {
+      try { exit.call(document); } catch (err) {}
+    }
+    return;
+  }
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen || root.webkitRequestFullScreen;
+  if (!request) return;
+  try {
+    const pending = request.call(root);
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
+  } catch (err) {}
+}
+
+function syncFullscreenButton() {
+  const btn = document.getElementById("fullscreen-btn");
+  if (!btn) return;
+  const on = isFullscreen();
+  btn.textContent = on ? "EXIT FULL" : "FULL SCREEN";
+  btn.setAttribute("aria-label", on ? "Exit full screen" : "Enter full screen");
 }
 
 function resizeGame() {
@@ -682,8 +727,10 @@ function resizeGame() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
   if (inputMode === "mobile") {
-    W = window.innerWidth;
-    H = Math.floor(window.innerHeight * 0.66);
+    const portrait = window.innerHeight > window.innerWidth;
+    document.body.classList.toggle("portrait-rotated", portrait);
+    const displayW = portrait ? window.innerHeight : window.innerWidth;
+    const displayH = portrait ? window.innerWidth : window.innerHeight;
     mobileControls.classList.remove("hidden");
     instructionsDesktop.classList.add("hidden");
     instructionsMobile.classList.remove("hidden");
@@ -693,9 +740,14 @@ function resizeGame() {
     container.style.height = "";
     stage.style.width = "";
     stage.style.height = "";
-    canvas.style.width = "";
-    canvas.style.height = "";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.width = Math.max(1, Math.round(displayW * dpr));
+    canvas.height = Math.max(1, Math.round(displayH * dpr));
+    H = DESKTOP_H;
+    W = H * (displayW / displayH);
   } else {
+    document.body.classList.remove("portrait-rotated");
     mobileControls.classList.add("hidden");
     instructionsDesktop.classList.remove("hidden");
     instructionsMobile.classList.add("hidden");
@@ -716,26 +768,40 @@ function resizeGame() {
     W = H * (canvas.width / canvas.height);
   }
 
-  if (inputMode === "mobile") {
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-  }
-
   if (waitingToStart || gameOver) {
     ship.x = W / 2;
     ship.y = H / 2;
   }
+  syncFullscreenButton();
   createStarfield();
 }
 
+function holdControl(el) {
+  if (!el) return;
+  clearTimeout(el._dimTimer);
+  el.classList.add("pressed");
+  el.classList.remove("held");
+  el._dimTimer = setTimeout(() => el.classList.add("held"), 160);
+}
+
+function releaseControl(el) {
+  if (!el) return;
+  clearTimeout(el._dimTimer);
+  el.classList.remove("pressed", "held");
+}
+
 function resetJoystick() {
+  const base = document.getElementById("joystick-base");
+  if (base && joystick.touchId != null && base.hasPointerCapture && base.hasPointerCapture(joystick.touchId)) {
+    try { base.releasePointerCapture(joystick.touchId); } catch (err) {}
+  }
   joystick.active = false;
   joystick.touchId = null;
   joystick.normX = 0;
   joystick.normY = 0;
   joystick.power = 0;
   joystick.angle = 0;
-  mobileInput.fire = false;
+  releaseControl(base);
   const knob = document.getElementById("joystick-knob");
   if (knob) {
     knob.style.transform = "translate(0px, 0px)";
@@ -958,18 +1024,33 @@ function setupDesktopMouseControls() {
 }
 
 function setupMobileControls() {
-  const zone = document.getElementById("joystick-zone");
   const base = document.getElementById("joystick-base");
   const knob = document.getElementById("joystick-knob");
   const fireBtn = document.getElementById("fire-btn");
   const waveBtn = document.getElementById("wave-btn");
   const bombBtn = document.getElementById("bomb-btn");
 
+  function joystickCenter() {
+    const rect = base.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      radius: Math.min(rect.width, rect.height) / 2,
+    };
+  }
+
+  function touchOnJoystick(touch) {
+    const center = joystickCenter();
+    const dx = touch.clientX - center.x;
+    const dy = touch.clientY - center.y;
+    return dx * dx + dy * dy <= center.radius * center.radius;
+  }
+
   function getJoystickMaxRadius() {
     const baseRect = base.getBoundingClientRect();
     const knobRect = knob.getBoundingClientRect();
-    const baseRadius = baseRect.width / 2;
-    const knobRadius = knobRect.width / 2;
+    const baseRadius = Math.min(baseRect.width, baseRect.height) / 2;
+    const knobRadius = Math.min(knobRect.width, knobRect.height) / 2;
     return Math.max(8, baseRadius - knobRadius - 2);
   }
 
@@ -985,6 +1066,11 @@ function setupMobileControls() {
 
     let dx = touch.clientX - centerX;
     let dy = touch.clientY - centerY;
+    if (document.body.classList.contains("portrait-rotated")) {
+      const screenX = dx;
+      dx = dy;
+      dy = -screenX;
+    }
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist > maxRadius) {
@@ -998,71 +1084,72 @@ function setupMobileControls() {
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   }
 
-  function findJoystickTouch(touches) {
-    for (const touch of touches) {
-      if (touch.identifier === joystick.touchId) return touch;
-    }
-    return null;
-  }
-
-  zone.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    if (waitingToStart || gameOver || shipBreakActive) return;
-    const touch = e.changedTouches[0];
+  base.addEventListener("pointerdown", (e) => {
+    if (waitingToStart || gameOver || joystick.active) return;
+    if (!touchOnJoystick(e)) return;
     joystick.active = true;
-    joystick.touchId = touch.identifier;
-    moveKnob(touch);
-  }, { passive: false });
-
-  function onJoystickTouchMove(e) {
-    if (!joystick.active) return;
-    const touch = findJoystickTouch(e.touches);
-    if (touch) {
-      e.preventDefault();
-      moveKnob(touch);
+    joystick.touchId = e.pointerId;
+    holdControl(base);
+    moveKnob(e);
+    if (base.setPointerCapture) {
+      try { base.setPointerCapture(e.pointerId); } catch (err) {}
     }
-  }
+  });
 
-  zone.addEventListener("touchmove", onJoystickTouchMove, { passive: false });
-  document.addEventListener("touchmove", onJoystickTouchMove, { passive: false });
+  base.addEventListener("pointermove", (e) => {
+    if (!joystick.active || e.pointerId !== joystick.touchId) return;
+    moveKnob(e);
+  });
 
   function endJoystick(e) {
-    for (const touch of e.changedTouches) {
-      if (touch.identifier === joystick.touchId) {
-        resetJoystick();
-        stopThrustSound();
-        break;
-      }
-    }
+    if (!joystick.active || e.pointerId !== joystick.touchId) return;
+    resetJoystick();
+    stopThrustSound();
   }
 
-  zone.addEventListener("touchend", endJoystick);
-  zone.addEventListener("touchcancel", endJoystick);
-  document.addEventListener("touchend", endJoystick);
-  document.addEventListener("touchcancel", endJoystick);
+  base.addEventListener("pointerup", endJoystick);
+  base.addEventListener("pointercancel", endJoystick);
 
-  fireBtn.addEventListener("touchstart", (e) => {
+  fireBtn.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.preventDefault();
+    holdControl(fireBtn);
     if (waitingToStart || gameOver || shipBreakActive) return;
     mobileInput.fire = true;
     shoot();
-  }, { passive: false });
-
-  fireBtn.addEventListener("touchend", () => {
-    mobileInput.fire = false;
+    if (fireBtn.setPointerCapture) {
+      try { fireBtn.setPointerCapture(e.pointerId); } catch (err) {}
+    }
   });
+
+  function endFire(e) {
+    if (fireBtn.hasPointerCapture && fireBtn.hasPointerCapture(e.pointerId)) {
+      try { fireBtn.releasePointerCapture(e.pointerId); } catch (err) {}
+    }
+    releaseControl(fireBtn);
+    mobileInput.fire = false;
+  }
+
+  fireBtn.addEventListener("pointerup", endFire);
+  fireBtn.addEventListener("pointercancel", endFire);
 
   bombBtn.addEventListener("touchstart", (e) => {
     e.preventDefault();
+    holdControl(bombBtn);
     if (waitingToStart || gameOver || shipBreakActive) return;
     fireClusterBomb();
   }, { passive: false });
+  bombBtn.addEventListener("touchend", () => releaseControl(bombBtn));
+  bombBtn.addEventListener("touchcancel", () => releaseControl(bombBtn));
 
   waveBtn.addEventListener("touchstart", (e) => {
     e.preventDefault();
+    holdControl(waveBtn);
     if (waitingToStart || gameOver || shipBreakActive) return;
     activateShockwave();
   }, { passive: false });
+  waveBtn.addEventListener("touchend", () => releaseControl(waveBtn));
+  waveBtn.addEventListener("touchcancel", () => releaseControl(waveBtn));
 
   startScreen.addEventListener("touchstart", (e) => {
     e.preventDefault();
@@ -1084,6 +1171,17 @@ function isShockwaveReady() {
 function getWaveCooldownSeconds() {
   const remainingMs = shockwaveCooldownUntil - Date.now();
   return Math.max(0, Math.ceil(remainingMs / 1000));
+}
+
+function syncControlFade() {
+  const playing = inputMode === "mobile" && !waitingToStart && !gameOver && waveBanner <= 0;
+  if (!playing) {
+    controlsFadeAt = 0;
+    document.body.classList.remove("controls-settled");
+    return;
+  }
+  if (controlsFadeAt === 0) controlsFadeAt = performance.now() + 1000;
+  document.body.classList.toggle("controls-settled", performance.now() >= controlsFadeAt);
 }
 
 function updateWaveUI() {
@@ -1342,7 +1440,7 @@ function syncPowerupLabel() {
   const bombBtn = document.getElementById("bomb-btn");
   if (bombBtn) {
     bombBtn.disabled = bombCharges <= 0;
-    bombBtn.textContent = bombCharges > 1 ? "B" + bombCharges : "B";
+    bombBtn.textContent = "BOMB";
   }
 }
 
@@ -2230,6 +2328,8 @@ function drawParticles() {
 }
 
 // --- Circle cluster enemy ---
+const CLUSTER_SPIN = 0.006;
+
 function createCluster(x, y) {
   const circles = [];
   for (let i = 0; i < 8; i++) {
@@ -2245,7 +2345,7 @@ function createCluster(x, y) {
     pushX: 0,
     pushY: 0,
     rot: rand(0, Math.PI * 2),
-    spin: 0.012,
+    spin: (Math.random() < 0.5 ? -1 : 1) * CLUSTER_SPIN,
     circles,
     radius: 27.2 + CLUSTER_CIRCLE_R,
     grace: 0.7,
@@ -2388,6 +2488,16 @@ function updateClusters(dt) {
   }
 }
 
+function livingCellScale(angle, ring) {
+  let along = angle / (Math.PI * 2) - performance.now() * 0.00042 - (ring || 0) * 0.11;
+  along -= Math.floor(along);
+  const dist = along > 0.5 ? 1 - along : along;
+  const width = 0.055;
+  if (dist >= width) return 1;
+  const pinch = 1 - dist / width;
+  return 1 - 0.32 * pinch * pinch;
+}
+
 function drawClusters() {
   ctx.strokeStyle = "#ff3333";
   ctx.lineWidth = 2;
@@ -2395,7 +2505,7 @@ function drawClusters() {
     for (const circle of cluster.circles) {
       const pos = circleWorldPos(cluster, circle);
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, CLUSTER_CIRCLE_R, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, CLUSTER_CIRCLE_R * livingCellScale(circle.angle, circle.ring), 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -2770,7 +2880,7 @@ function drawBoss() {
   ctx.lineWidth = 2;
   for (const circle of boss.circles) {
     if (!circle.alive || circle.appearDelay > 0 || circle.core) continue;
-    const scale = Math.max(0.05, circle.grow);
+    const scale = Math.max(0.05, circle.grow) * livingCellScale(circle.angle, circle.ring);
     ctx.globalAlpha = 0.4 + 0.6 * circle.grow;
     ctx.strokeStyle = circle.grow < 1 ? "#ff8888" : "#ff3333";
     ctx.beginPath();
@@ -2781,7 +2891,7 @@ function drawBoss() {
   ctx.fillStyle = "#ff3333";
   for (const circle of boss.circles) {
     if (!circle.alive || circle.appearDelay > 0 || !circle.core) continue;
-    const scale = Math.max(0.05, circle.grow);
+    const scale = Math.max(0.05, circle.grow) * livingCellScale(circle.angle, circle.ring);
     ctx.globalAlpha = 0.45 + 0.55 * circle.grow;
     ctx.beginPath();
     ctx.arc(Math.cos(circle.angle) * circle.r, Math.sin(circle.angle) * circle.r, CLUSTER_CIRCLE_R * scale, 0, Math.PI * 2);
@@ -2924,18 +3034,41 @@ function drawScorePopups() {
   ctx.textAlign = "left";
 }
 
+function localBox(el) {
+  const stage = canvas.parentElement;
+  const box = el.getBoundingClientRect();
+  const stageBox = stage.getBoundingClientRect();
+  if (!document.body.classList.contains("portrait-rotated")) {
+    return {
+      x: box.left - stageBox.left,
+      y: box.top - stageBox.top,
+      w: box.width,
+      h: box.height,
+    };
+  }
+  // The playfield is rotated 90° clockwise, so viewport deltas are swapped.
+  return {
+    x: box.top - stageBox.top,
+    y: stageBox.right - box.right,
+    w: box.height,
+    h: box.width,
+  };
+}
+
 function drawLives() {
   if (waitingToStart || gameOver) return;
-  const canvasRect = canvas.getBoundingClientRect();
-  const scoreRect = scoreEl.getBoundingClientRect();
-  if (canvasRect.width < 1 || canvasRect.height < 1) return;
-  const toX = W / canvasRect.width;
-  const toY = H / canvasRect.height;
-  const iconH = Math.max(10, scoreRect.height * 0.72);
+  const cssW = canvas.clientWidth;
+  const cssH = canvas.clientHeight;
+  if (cssW < 1 || cssH < 1) return;
+  const scoreBox = localBox(scoreEl);
+  const canvasBox = localBox(canvas);
+  const toX = W / cssW;
+  const toY = H / cssH;
+  const iconH = Math.max(10, scoreBox.h * 0.72);
   const iconW = iconH * 0.8;
   const gap = 6;
-  const left = scoreRect.left - canvasRect.left;
-  const top = scoreRect.bottom - canvasRect.top + 6;
+  const left = scoreBox.x - canvasBox.x;
+  const top = scoreBox.y + scoreBox.h - canvasBox.y + 6;
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 1.5 * toY;
   for (let i = 0; i < lives; i++) {
@@ -3697,27 +3830,48 @@ function drawGameOver() {
   ctx.textAlign = "center";
 
   const mobile = inputMode === "mobile";
-  const titleSize = mobile ? Math.max(16, H * 0.055) : 36;
-  const scoreSize = mobile ? Math.max(11, H * 0.032) : 22;
-  const headingSize = mobile ? Math.max(10, H * 0.028) : 20;
-  const entrySize = mobile ? Math.max(9, H * 0.025) : 18;
-  const hintSize = mobile ? Math.max(9, H * 0.024) : 18;
-  const lineGap = mobile ? Math.max(14, H * 0.048) : 30;
+  let titleSize = mobile ? Math.max(16, H * 0.055) : 36;
+  let scoreSize = mobile ? Math.max(11, H * 0.032) : 22;
+  let headingSize = mobile ? Math.max(10, H * 0.028) : 20;
+  let entrySize = mobile ? Math.max(9, H * 0.025) : 18;
+  let hintSize = mobile ? Math.max(9, H * 0.024) : 18;
+  let lineGap = mobile ? Math.max(14, H * 0.048) : 30;
+  let afterTitle = mobile ? H * 0.07 : 42;
+  let afterScore = mobile ? H * 0.06 : 46;
+  let afterHeading = mobile ? H * 0.055 : 34;
+  let beforeHint = mobile ? H * 0.06 : 44;
 
-  let y = mobile ? H * 0.1 : 150;
+  const blockHeight = () => titleSize + afterTitle + afterScore + afterHeading
+    + lineGap * (MAX_HIGH_SCORES - 1) + beforeHint + hintSize;
+  const limit = H * 0.86;
+  if (blockHeight() > limit) {
+    const scale = limit / blockHeight();
+    titleSize *= scale;
+    scoreSize *= scale;
+    headingSize *= scale;
+    entrySize *= scale;
+    hintSize *= scale;
+    lineGap *= scale;
+    afterTitle *= scale;
+    afterScore *= scale;
+    afterHeading *= scale;
+    beforeHint *= scale;
+  }
+
+  let y = (H - blockHeight()) / 2 + titleSize;
 
   ctx.font = `${titleSize}px Courier New`;
   ctx.fillText("GAME OVER", W / 2, y);
 
-  y += mobile ? H * 0.08 : 45;
+  y += afterTitle;
   ctx.font = `${scoreSize}px Courier New`;
   ctx.fillText("Score: " + score, W / 2, y);
 
-  y += mobile ? H * 0.07 : 50;
+  y += afterScore;
   ctx.font = `${headingSize}px Courier New`;
   ctx.fillText("HIGH SCORES", W / 2, y);
 
-  y += mobile ? H * 0.06 : 35;
+  y += afterHeading;
   ctx.font = `${entrySize}px Courier New`;
   ctx.textAlign = "left";
   const rows = [];
@@ -3752,13 +3906,15 @@ function drawGameOver() {
     if (row.latest) ctx.fillText("*", gridX + gridW + (mobile ? 10 : 16), y);
     y += lineGap;
   }
+  y -= lineGap;
   ctx.textAlign = "center";
 
+  y += beforeHint;
   ctx.font = `${hintSize}px Courier New`;
   const restartHint = mobile
     ? "Tap screen to return to title"
     : "Press SPACE to return to title";
-  ctx.fillText(restartHint, W / 2, H - (mobile ? H * 0.06 : 60));
+  ctx.fillText(restartHint, W / 2, y);
   ctx.textAlign = "left";
 }
 
@@ -3967,6 +4123,7 @@ function update(currentTime) {
 
   updateScreenShake(dt);
   updateWaveUI();
+  syncControlFade();
   syncPowerupLabel();
   updateScorePopups(dt);
   updateShipDebris(dt);
@@ -4020,6 +4177,28 @@ resizeGame();
 setupMobileControls();
 setupDesktopMouseControls();
 window.addEventListener("resize", resizeGame);
+window.addEventListener("orientationchange", () => setTimeout(resizeGame, 80));
+document.addEventListener("fullscreenchange", () => {
+  resizeGame();
+  syncFullscreenButton();
+});
+document.addEventListener("webkitfullscreenchange", () => {
+  resizeGame();
+  syncFullscreenButton();
+});
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+document.addEventListener("touchstart", (e) => {
+  if (e.target.closest && e.target.closest("#mobile-controls, #game")) e.preventDefault();
+}, { passive: false, capture: true });
+window.addEventListener("pointerdown", (e) => {
+  if (e.target.closest && e.target.closest("#fullscreen-btn")) return;
+  resumeAudio();
+});
+document.getElementById("fullscreen-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleFullscreen();
+  resumeAudio();
+});
 spawnInitialRocks(4);
 resetUfoSpawning();
 lastFrameTime = performance.now();

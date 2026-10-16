@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Retro Asteroids</title>
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="desktop-mode">
@@ -19,7 +24,10 @@
           <span id="wave-countdown"></span>
         </div>
       </div>
-      <button id="mute-btn" type="button" aria-label="Toggle sound">SFX ON</button>
+      <div id="corner-controls">
+        <button id="fullscreen-btn" type="button" aria-label="Enter full screen">FULL SCREEN</button>
+        <button id="mute-btn" type="button" aria-label="Toggle sound">SFX ON</button>
+      </div>
       <div id="start-screen">
         <h1>ASTEROIDS</h1>
         <div id="instructions-desktop" class="instructions">
@@ -36,7 +44,7 @@
         <div id="instructions-mobile" class="instructions hidden">
           <p>Drag <strong>joystick</strong> toward where you want to fly</p>
           <p>Pull opposite to your drift to slow down</p>
-          <p><strong>FIRE</strong> — Shoot &nbsp; <strong>B</strong> — Bomb &nbsp; <strong>WAVE</strong> — Shockwave</p>
+          <p><strong>FIRE</strong> — Shoot &nbsp; <strong>BOMB</strong> — Bomb &nbsp; <strong>WAVE</strong> — Shockwave</p>
         </div>
         <p class="start-prompt start-prompt-desktop">Press <strong>SPACE</strong> to start</p>
         <p class="start-prompt start-prompt-mobile hidden">Tap screen to start</p>
@@ -51,7 +59,7 @@
         </div>
       </div>
       <div id="action-buttons">
-        <button id="bomb-btn" type="button" disabled>B</button>
+        <button id="bomb-btn" type="button" disabled>BOMB</button>
         <button id="fire-btn" type="button">FIRE</button>
         <button id="wave-btn" type="button">WAVE</button>
       </div>

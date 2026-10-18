@@ -4,7 +4,7 @@
 
 **Retro Space Shooter** is a retro arcade-style space shooter inspired by classic vector games like *Asteroids*.
 
-The game uses a black starfield and white line-art graphics. You fly a triangular ship, shoot rocks, dodge hunter UFOs and red clusters, collect pickups, and fight a boss on every 5th wave. You start with 3 lives. The top 5 scores stay saved in the browser.
+The game uses a black starfield and white line-art graphics. You fly a triangular ship, shoot rocks, dodge hunter UFOs and red clusters, collect pickups, and fight a boss on every 5th wave. You start with 3 lives and can earn up to 5. The top 5 scores stay saved in the browser.
 
 This project was built with AI assistance using [Cursor](https://cursor.com).
 
@@ -16,13 +16,13 @@ This project was built with AI assistance using [Cursor](https://cursor.com).
 
 | Key / Input | Action |
 |-------------|--------|
-| **W** | Thrust forward |
-| **A** | Rotate left |
-| **D** | Rotate right |
-| **S** | Reverse thrust / slow down |
+| **W** | Thrust forward along the nose. Speed builds while held, up to the ship limit |
+| **S** | Thrust backward, slower than forward |
+| **A** | Slide left of the nose |
+| **D** | Slide right of the nose |
 | **Spacebar** | Shoot. On key press, also fires one stored bomb if you have one |
 | **E** | Shockwave |
-| **Mouse over canvas** | Ship rotates toward the cursor; distance from the ship controls thrust |
+| **Mouse over canvas** | Ship turns toward the pointer. Existing speed carries on, so reversing or sliding takes a distance that grows with speed |
 | **Left click (hold)** | Fire |
 | **Right click** | Shockwave |
 
@@ -45,17 +45,6 @@ The game over title, score, and high scores are centered on the screen. **Tap sc
 
 **FULL SCREEN** and **SFX ON / OFF** sit together at the bottom center. On iPhone and iPad the game stays inside the Safari window until **FULL SCREEN** is tapped. That expands the game over the browser bars, and **EXIT FULL** brings those bars back. The page does not start in full screen.
 
-### Debug keys (desktop)
-
-These are for testing. **1** and **2** can start a boss test from the title. The other keys do nothing on the title screen or during game over.
-
-| Key | Action |
-|-----|--------|
-| **U** | Force-spawn a UFO |
-| **B** | Add one bomb charge (does not fire it) |
-| **1** | Enter the wave 5 boss test in debug mode. The ship can still break, but it does not lose a life. Press **1** again to leave debug mode |
-| **2** | Enter the wave 10 boss test in debug mode. Debug stays on if it is already on, including when **2** is pressed again. Press **1** to leave debug mode |
-
 ---
 
 ## Gameplay Features
@@ -63,18 +52,18 @@ These are for testing. **1** and **2** can start a boss test from the title. The
 - **Full-window playfield** — desktop fills the browser window. The game stays 540 units tall, and the width follows the screen, so objects keep their size on a widescreen monitor. On a phone the playfield also fills the screen, with the controls drawn on top of it
 - **Drifting starfield** — two layers of slow white dots. A star hides while it is inside a rock, UFO, cluster circle, boss circle, or the ship
 - **Inertia** — the ship drifts and does not stop instantly
-- **3 lives** — shown as small ships under the score, including on a phone. A hit breaks the ship into debris, then a new ship appears. Respawns avoid the center if something is already there. A thumb already resting on the joystick when the new ship appears can steer it immediately
+- **Lives** — you start with 3, shown as small ships under the score, including on a phone. Extra ships come at 30,000 points, then 80,000, then further apart by 20,000 each time. The cap is 5, and the word **max** sits beside the fifth ship. A score milestone at 5 lives is used up, so losing a ship does not hand it straight back. On the last life a red edge pulses and a heartbeat plays. A hit breaks the ship into debris, then a new ship appears. Respawns avoid the center if something is already there. A thumb already resting on the joystick when the new ship appears can steer it immediately
 - **Shooting** — Space or FIRE. Hold **FIRE** to keep shooting. Bullets wrap the screen until they expire
 - **Rocks** — large rocks split into medium, medium into small. Rocks bounce off each other, off red clusters, off the boss, and off the flying red cells. A UFO still pushes rocks out of its way
-- **Waves** — clearing the field starts the next wave. A title card (**WAVE N**) fades in above the ship before enemies appear. Clearing a wave scores a bonus, plus a clean bonus if the shockwave was not used
+- **Waves** — clearing the field starts the next wave. A title card (**WAVE N**) fades in above the ship before enemies appear. Wave 1 is rocks only. Wave 2 hides one chasing cluster, wave 3 hides one pulsing cluster, and wave 4 adds the first UFO. From wave 5 the mix is random, and the wave label counts down with **BOSS IN N**. Clearing a wave scores a bonus, plus a clean bonus if the shockwave was not used. After a boss, later waves add a little more rock speed
 - **Red clusters** — some large rocks hide a cluster of small red circles. The cluster turns slowly and chases the ship. A ripple travels around the circles so they briefly shrink and grow back, like living cells. Bullets peel the outer ring. The ship touching one costs a life. Destroying the last circle clears the cluster. Clusters bounce off rocks, the boss, and each other. A rarer rock hides a smaller cluster: five cells around one center. It stays put and pulses five times. Cells can still be shot while it pulses. Whatever is left then bursts outward and chases the ship. Each cell leaves one thin smoke trail, wraps to the far side of the screen, and keeps going until it is destroyed. Those cells bounce off clusters, the boss, and each other. Touching a rock pops the cell. Bullets, the shockwave, and the bomb can destroy them too
 - **UFO hunter** — a green saucer that does not shoot. It patrols, chases when you are close, and steers around rocks and clusters. Contact costs a life unless a shield is up. From wave 5, up to two UFOs can be on screen. UFOs are worth 500 points. UFO movement is unchanged when other objects bounce
-- **Boss** — wave 5 and every 5th wave is **CRIMSON NUCLEUS**, a spinning red core with five outer shells. Its circles use the same living ripple as the clusters. It chases slowly. Peel circles one at a time; the boss dies only when every core circle is gone. The circles still left then pop in a random order, and the defeated title appears after the last one is gone. Under half core it stops, pulses five red rings, then regrows missing shell circles from the inside out. Later rebuilds wait until the outer shell is under half. Wave 10, and every 10th wave, is **CRIMSON HALO**: the same boss with three extra shell rings. It shakes, then throws the brightest circles on the outside edge that faces the ship. A circle behind another one stays until that outer circle is gone. Those shots fly straight and disappear off screen. Under half shells, or the first time the core is under half, the missing shell circles grow back and the circles still there stay. After a boss, later waves add extra rocks and a little more rock speed
+- **Boss** — wave 5 and every 5th wave is **CRIMSON NUCLEUS**, a spinning red core with five outer shells. Its circles use the same living ripple as the clusters. It chases slowly. Peel circles one at a time; the boss dies only when every core circle is gone. The circles still left then pop in a random order, and the defeated title appears after the last one is gone. Under half core it stops, pulses five red rings, then regrows missing shell circles from the inside out. Later rebuilds wait until the outer shell is under half. Wave 10, and every 10th wave, is **CRIMSON HALO**: the same boss with three extra shell rings. It shakes, then throws the brightest circles on the outside edge that faces the ship. A circle behind another one stays until that outer circle is gone. Those shots fly straight and disappear off screen. Under half shells, or the first time the core is under half, the missing shell circles grow back and the circles still there stay. A boss theme plays until the boss starts to break apart
 - **Shockwave** — **E** or **WAVE**, with a 5-second cooldown. The label at the top-right reads **SHOCKWAVE READY**. The ring breaks rocks, destroys UFOs, and pops cluster and boss circles it touches. Firing it also slows the ship along the direction it is facing. Rocks and the shockwave keep moving while the ship is breaking. Pieces from a broken rock are pushed clear of the ship so they do not appear on top of it
 - **Pickups** — blue icons that drift until collected. At most 10 of each type can be on screen. Each one lasts 30 seconds, then blinks and fades over the last 8 seconds. Effects stay active together until their own timers end
-- **Score and high scores** — score at the top-left, wave at the top-center, active pickups in blue under the shockwave label. The top 5 scores are saved in `localStorage`, each with the wave from that game over. On the game over screen they form a centered grid of rank, score, and wave. A `*` sits just to the right of the latest record
+- **Score and high scores** — score at the top-left, with the live **Best** under it, wave at the top-center, and active pickups in blue under the shockwave label. Bullet hits build a chain from **x1** to **x8**. The chain climbs while hits keep coming, and it drops back to **x1** about 2 seconds after the last hit, or when the ship breaks. A shield hit does not drop the chain. Shockwave, bomb, and crash kills score without raising it. Passing just outside a rock, UFO, cell, or boss shot scores **CLOSE** once for that object. Beating a saved best shows **NEW BEST**. The top 5 scores are saved in `localStorage`, each with the wave from that game over. On the game over screen they form a centered grid of rank, score, and wave. A `*` sits just to the right of the latest record
 - **Delta time** — movement and timers follow real time, so a 30 fps device and a 144 Hz monitor play at the same speed until a frame takes longer than 50 ms
-- **Sound** — Web Audio only (no audio files). The title screen plays a short original four-bar loop after the first click or key press, and that loop fades out when the game starts. During play: lasers, explosions, thrust, shockwave, UFO hums, cluster pops, a warble while a bomb is flying, and a heavier blast when that bomb explodes. The UFO hum stops when the UFO leaves or is destroyed, and when the tab is hidden. **SFX OFF** silences all of it
+- **Sound** — Web Audio only (no audio files). The title screen plays a short original four-bar loop after the first click or key press, and that loop fades out when the game starts. A faster eight-bar loop fades in when a boss appears and fades out when that boss starts to break apart. During play: lasers, explosions, thrust, shockwave, UFO hums, cluster pops, a warble while a bomb is flying, and a heavier blast when that bomb explodes. The UFO hum stops when the UFO leaves or is destroyed, and when the tab is hidden. **SFX OFF** silences all of it
 
 ### Pickups
 
@@ -155,6 +144,17 @@ Letters on pickups spin with the icon.
 - Clusters, the boss, and those flying cells bounce off rocks and off each other instead of overlapping. UFOs still follow their old movement
 - Added the title-screen music loop. It fades out when the game starts
 - A flying bomb warbles until it explodes, and the explosion is a heavier blast than the shockwave
+
+### Version 3.7
+
+- The score shows a live **Best**, a bullet chain up to **x8**, **CLOSE** for a near miss, and **NEW BEST** when a saved record falls
+- Extra ships start at 30,000 points and arrive further apart. Five lives is the cap, marked **max**
+- The first four waves teach rocks, the chasing cluster, the pulsing cluster, and the UFO. The wave label counts down to the boss
+- The last life adds a red edge and a heartbeat. A bullet pop pauses the action for two frames
+- On a desktop, the mouse turns the nose. **W** thrusts forward, **S** thrusts backward more slowly, and **A** and **D** slide sideways. Speed carries, so a fast ship needs room to swing around
+- A boss theme fades in with the boss and fades out as it breaks apart
+- Both red clusters chase faster
+- Debug spawn keys are off
 
 ---
 

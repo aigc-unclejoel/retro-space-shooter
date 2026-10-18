@@ -23,6 +23,20 @@ let inputMode = "desktop";
 
 // --- Game state ---
 let score = 0;
+let bestScore = 0;
+let newBestShown = false;
+let scoreMultiplier = 1;
+let chainTimer = 0;
+let nextLifeAt = 30000;
+let lifeScoreGap = 30000;
+let hitStopTimer = 0;
+let lastLifePulse = 0;
+const CHAIN_WINDOW = 2;
+const CHAIN_MAX = 8;
+const LIFE_SCORE_STEP = 30000;
+const MAX_LIVES = 5;
+const NEAR_MISS_SCORE = 50;
+const NEAR_MISS_BAND = 16;
 let gameOver = false;
 let waitingToStart = true;
 let screenShake = 0;
@@ -76,7 +90,7 @@ const CLEAN_WAVE_BONUS = 150;
 const CLUSTER_SPAWN_CHANCE = 0.25;
 const CLUSTER2_SPAWN_CHANCE = 0.14;
 const CLUSTER2_OUTER_R = 16;
-const CLUSTER2_SPEED = 0.9;
+const CLUSTER2_SPEED = 1.15;
 const CLUSTER2_PULSE_GAP = 0.8;
 const CLUSTER_CIRCLE_R = 5.6;
 const CLUSTER_POP_SCORE = 20;
@@ -196,6 +210,10 @@ const sfx = {
   titleOn: false,
   titleNext: 0,
   titleStep: 0,
+  bossGain: null,
+  bossOn: false,
+  bossNext: 0,
+  bossStep: 0,
 };
 
 function initAudio() {
@@ -229,6 +247,10 @@ function initAudio() {
   sfx.titleGain = sfx.ctx.createGain();
   sfx.titleGain.gain.value = 0.0001;
   sfx.titleGain.connect(sfx.master);
+
+  sfx.bossGain = sfx.ctx.createGain();
+  sfx.bossGain.gain.value = 0.0001;
+  sfx.bossGain.connect(sfx.master);
 
   initUfoSoundNodes();
 
@@ -604,6 +626,125 @@ function playTitleTone(time, midi, steps, type, peak, lowpass) {
   osc.stop(time + dur + 0.02);
 }
 
+const BOSS_BPM = 132;
+const BOSS_STEP = 60 / BOSS_BPM / 2;
+const BOSS_BARS = 64;
+const BOSS_LEAD = [
+  [0, 62, 2], [2, 65, 2], [4, 69, 4],
+  [12, 67, 2], [14, 65, 2],
+  [16, 65, 2], [20, 72, 4],
+  [24, 69, 2], [26, 67, 2], [28, 65, 4],
+  [32, 74, 2], [36, 72, 2], [40, 69, 4],
+  [44, 67, 2], [46, 65, 2],
+  [48, 70, 4], [52, 69, 2], [54, 67, 2],
+  [56, 65, 2], [58, 62, 2], [60, 62, 4],
+];
+const BOSS_BASS = [
+  [0, 38, 1], [2, 38, 1], [4, 38, 1], [6, 50, 1],
+  [8, 38, 1], [10, 38, 1], [12, 41, 1], [14, 38, 1],
+  [16, 36, 1], [18, 36, 1], [20, 36, 1], [22, 43, 1],
+  [24, 33, 1], [26, 33, 1], [28, 36, 1], [30, 38, 1],
+  [32, 38, 1], [34, 38, 1], [36, 38, 1], [38, 50, 1],
+  [40, 38, 1], [42, 41, 1], [44, 43, 1], [46, 38, 1],
+  [48, 34, 1], [50, 34, 1], [52, 34, 1], [54, 41, 1],
+  [56, 33, 1], [58, 36, 1], [60, 38, 1], [62, 38, 2],
+];
+
+function startBossMusic() {
+  if (sfx.muted || !boss || boss.phase === "collapse") return;
+  initAudio();
+  if (!sfx.bossGain || sfx.bossOn) return;
+  sfx.bossOn = true;
+  sfx.bossStep = 0;
+  sfx.bossNext = sfx.ctx.currentTime + 0.05;
+  const gain = sfx.bossGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(0.0001, now);
+  gain.linearRampToValueAtTime(0.38, now + 0.5);
+}
+
+function fadeBossMusic() {
+  if (!sfx.bossOn || !sfx.bossGain || !sfx.ctx) {
+    sfx.bossOn = false;
+    return;
+  }
+  sfx.bossOn = false;
+  const gain = sfx.bossGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(Math.max(0.0001, gain.value), now);
+  gain.linearRampToValueAtTime(0.0001, now + 1);
+}
+
+function stopBossMusic() {
+  sfx.bossOn = false;
+  if (!sfx.bossGain || !sfx.ctx) return;
+  const gain = sfx.bossGain.gain;
+  const now = sfx.ctx.currentTime;
+  gain.cancelScheduledValues(now);
+  gain.setValueAtTime(0.0001, now);
+}
+
+function scheduleBossMusic() {
+  if (!sfx.bossOn || !sfx.ctx || sfx.ctx.state !== "running") return;
+  const horizon = sfx.ctx.currentTime + 0.25;
+  while (sfx.bossNext < horizon) {
+    const step = sfx.bossStep % BOSS_BARS;
+    for (const note of BOSS_LEAD) {
+      if (note[0] === step) playBossTone(sfx.bossNext, note[1], note[2], "square", 0.08, 1400);
+    }
+    for (const note of BOSS_BASS) {
+      if (note[0] === step) playBossTone(sfx.bossNext, note[1], note[2], "triangle", 0.13, 0);
+    }
+    if (step % 2 === 0) playBossTick(sfx.bossNext);
+    sfx.bossNext += BOSS_STEP;
+    sfx.bossStep++;
+  }
+}
+
+function playBossTone(time, midi, steps, type, peak, lowpass) {
+  const ctx = sfx.ctx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+  const dur = Math.max(0.05, steps * BOSS_STEP);
+  gain.gain.setValueAtTime(0.0001, time);
+  gain.gain.exponentialRampToValueAtTime(peak, time + 0.02);
+  gain.gain.exponentialRampToValueAtTime(peak * 0.5, time + dur * 0.7);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+  if (lowpass > 0) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = lowpass;
+    osc.connect(filter);
+    filter.connect(gain);
+  } else {
+    osc.connect(gain);
+  }
+  gain.connect(sfx.bossGain);
+  osc.start(time);
+  osc.stop(time + dur + 0.02);
+}
+
+function playBossTick(time) {
+  const ctx = sfx.ctx;
+  const source = ctx.createBufferSource();
+  source.buffer = sfx.noiseBuffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = "highpass";
+  filter.frequency.value = 1800;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.045, time);
+  gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.04);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(sfx.bossGain);
+  source.start(time);
+  source.stop(time + 0.06);
+}
+
 function setMuted(muted) {
   sfx.muted = muted;
   if (sfx.master) {
@@ -613,8 +754,11 @@ function setMuted(muted) {
     stopThrustSound();
     stopAllUfoSounds();
     stopTitleMusic(true);
+    stopBossMusic();
   } else if (waitingToStart) {
     startTitleMusic();
+  } else if (boss && boss.phase !== "collapse") {
+    startBossMusic();
   }
   muteBtn.textContent = muted ? "SFX OFF" : "SFX ON";
 }
@@ -1201,58 +1345,13 @@ function updateDesktopMouseInput() {
 
 function updateDesktopMouseShip(dt) {
   updateDesktopMouseInput();
-  let thrusting = false;
-  const ts = timeScale(dt);
-
-  if (!mouse.tracking || mouse.power <= MOUSE_DEAD_ZONE) {
-    if (!keys.KeyW) stopThrustSound();
-    return thrusting;
-  }
-
-  const targetAngle = mouse.angle;
-  const power = mouse.power;
-  const angleDiff = shortestAngleDiff(ship.angle, targetAngle);
-
+  if (!mouse.tracking) return;
+  const dx = mouse.x - ship.x;
+  const dy = mouse.y - ship.y;
+  if (dx * dx + dy * dy <= 1) return;
+  const angleDiff = shortestAngleDiff(ship.angle, mouse.angle);
   const turnStep = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), MOBILE_MAX_TURN_SPEED * dt);
   ship.angle += turnStep;
-
-  const facingAlign = Math.cos(shortestAngleDiff(ship.angle, targetAngle));
-  const speed = shipSpeed();
-  let braking = false;
-
-  if (speed > 0.2) {
-    const velAngle = Math.atan2(ship.vy, ship.vx);
-    const velAlign = Math.cos(shortestAngleDiff(velAngle, targetAngle));
-
-    if (velAlign < -0.35) {
-      const brakeStrength = power * Math.abs(velAlign) * ship.reversePower * ts;
-      ship.vx -= Math.cos(velAngle) * brakeStrength;
-      ship.vy -= Math.sin(velAngle) * brakeStrength;
-      braking = true;
-      thrusting = true;
-      startThrustSound();
-    }
-  }
-
-  if (!braking) {
-    if (facingAlign > 0.6) {
-      const thrustStrength = power * facingAlign * shipThrustPower() * ts;
-      ship.vx += Math.cos(ship.angle) * thrustStrength;
-      ship.vy += Math.sin(ship.angle) * thrustStrength;
-      thrusting = true;
-      startThrustSound();
-    } else if (facingAlign > 0.15) {
-      const thrustStrength = power * facingAlign * shipThrustPower() * ts * 0.35;
-      ship.vx += Math.cos(ship.angle) * thrustStrength;
-      ship.vy += Math.sin(ship.angle) * thrustStrength;
-      thrusting = true;
-      startThrustSound();
-    } else if (!keys.KeyW) {
-      stopThrustSound();
-    }
-  }
-
-  return thrusting;
 }
 
 function getCanvasMousePos(e) {
@@ -1615,8 +1714,6 @@ window.addEventListener("keydown", (e) => {
 
   if (waitingToStart) {
     if (e.code === "Space") beginGame();
-    if (e.code === "Digit1" && !e.repeat) startBossTest(5);
-    if (e.code === "Digit2" && !e.repeat) startBossTest(10);
     return;
   }
 
@@ -1631,27 +1728,6 @@ window.addEventListener("keydown", (e) => {
 
   if (e.code === "KeyE" && !e.repeat && inputMode === "desktop") {
     activateShockwave();
-    return;
-  }
-
-  if (e.code === "Digit1" && !e.repeat) {
-    startBossTest(5);
-    return;
-  }
-
-  if (e.code === "Digit2" && !e.repeat) {
-    startBossTest(10);
-    return;
-  }
-
-  if (e.code === "KeyU" && !e.repeat) {
-    spawnUfo(true);
-    return;
-  }
-
-  if (e.code === "KeyB" && !e.repeat && !shipBreakActive) {
-    bombCharges += 1;
-    syncPowerupLabel();
     return;
   }
 
@@ -1727,8 +1803,73 @@ function addHighScore(newScore, newWave) {
 }
 
 function syncStageLabel() {
-  if (stageLabelEl) stageLabelEl.textContent = boss ? "W" + wave + " BOSS" : "WAVE " + wave;
+  if (stageLabelEl) {
+    let text = boss ? "W" + wave + " BOSS" : "WAVE " + wave;
+    if (!boss && wave % 5 !== 0) text += "\nBOSS IN " + (5 - (wave % 5));
+    stageLabelEl.textContent = text;
+  }
   if (debugLabelEl) debugLabelEl.textContent = bossDebug ? "Debug Mode" : "";
+}
+
+function syncScoreLabel() {
+  const chain = scoreMultiplier > 1 ? "   x" + scoreMultiplier : "";
+  const bestText = bestScore > 0 ? String(bestScore) : "----";
+  scoreEl.textContent = "Score: " + score + chain + "\nBest: " + bestText;
+}
+
+function playTone(freq, duration, peak, type) {
+  if (!sfx.ready || sfx.muted || !sfx.ctx) return;
+  const ctx = sfx.ctx;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || "square";
+  osc.frequency.setValueAtTime(freq, now);
+  gain.gain.setValueAtTime(peak, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  osc.connect(gain);
+  gain.connect(sfx.master);
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+}
+
+function noteScoreMilestones(before) {
+  if (!newBestShown && bestScore > 0 && before < bestScore && score >= bestScore) {
+    newBestShown = true;
+    scorePopups.push({ x: ship.x, y: ship.y - 28, text: "NEW BEST", life: 1.4 });
+    playTone(880, 0.18, 0.08);
+  }
+  while (score >= nextLifeAt) {
+    lifeScoreGap += 20000;
+    nextLifeAt += lifeScoreGap;
+    if (lives >= MAX_LIVES) continue;
+    lives += 1;
+    scorePopups.push({ x: ship.x, y: ship.y - 36, text: "EXTRA SHIP", life: 1.4 });
+    playTone(660, 0.22, 0.1);
+  }
+}
+
+function addScore(points, x, y, label) {
+  const before = score;
+  score += points;
+  noteScoreMilestones(before);
+  syncScoreLabel();
+  scorePopups.push({
+    x,
+    y,
+    text: label || ("+" + points),
+    life: 1,
+  });
+}
+
+function addChainScore(points, x, y) {
+  if (chainTimer > 0 && scoreMultiplier < CHAIN_MAX) scoreMultiplier += 1;
+  chainTimer = CHAIN_WINDOW;
+  const gained = points * scoreMultiplier;
+  addScore(gained, x, y, scoreMultiplier > 1 ? "+" + gained + "  x" + scoreMultiplier : "+" + gained);
+  syncScoreLabel();
+  hitStopTimer = 2 / 60;
+  playTone(520 + scoreMultiplier * 40, 0.05, 0.04);
 }
 
 function syncPowerupLabel() {
@@ -1748,16 +1889,6 @@ function syncPowerupLabel() {
   }
 }
 
-function addScore(points, x, y, label) {
-  score += points;
-  scoreEl.textContent = "Score: " + score;
-  scorePopups.push({
-    x,
-    y,
-    text: label || ("+" + points),
-    life: 1,
-  });
-}
 
 function shipCanBeHit() {
   return !gameOver && !shipBreakActive && !waitingToStart && performance.now() >= invincibleUntil;
@@ -1797,6 +1928,12 @@ function hazardClearance(x, y) {
     gap = Math.min(gap, distance(x, y, cluster.x, cluster.y) - cluster.radius);
   }
   if (boss) gap = Math.min(gap, distance(x, y, boss.x, boss.y) - boss.radius);
+  for (const seeker of clusterSeekers) {
+    gap = Math.min(gap, distance(x, y, seeker.x, seeker.y) - seeker.radius);
+  }
+  for (const shot of bossBullets) {
+    gap = Math.min(gap, distance(x, y, shot.x, shot.y) - shot.radius);
+  }
   return gap;
 }
 
@@ -1864,6 +2001,38 @@ function shipMaxSpeed() {
   return ship.maxSpeed * (slowTimer > 0 ? 0.62 : 1);
 }
 
+function applyDesktopMoveKeys(ts) {
+  let forwardInput = 0;
+  let strafeInput = 0;
+  if (keys.KeyW) forwardInput += 1;
+  if (keys.KeyS) forwardInput -= 1;
+  if (keys.KeyA) strafeInput -= 1;
+  if (keys.KeyD) strafeInput += 1;
+
+  const mag = Math.hypot(forwardInput, strafeInput);
+  if (mag === 0) {
+    stopThrustSound();
+    return false;
+  }
+
+  forwardInput /= mag;
+  strafeInput /= mag;
+
+  const noseX = Math.cos(ship.angle);
+  const noseY = Math.sin(ship.angle);
+  const rightX = Math.cos(ship.angle + Math.PI / 2);
+  const rightY = Math.sin(ship.angle + Math.PI / 2);
+  const forward = shipThrustPower();
+  const reverse = forward * 0.45;
+  const slide = forward * 0.7;
+  const along = forwardInput > 0 ? forwardInput * forward : forwardInput * reverse;
+
+  ship.vx += (noseX * along + rightX * strafeInput * slide) * ts;
+  ship.vy += (noseY * along + rightY * strafeInput * slide) * ts;
+  startThrustSound();
+  return true;
+}
+
 function clearRunHazards() {
   rocks = [];
   bullets = [];
@@ -1877,6 +2046,7 @@ function clearRunHazards() {
   boss = null;
   bossPulses = [];
   bossBullets = [];
+  stopBossMusic();
   ufos = [];
   ufoSpawnTimer = 0;
   ufoNextSpawn = rand(UFO_SPAWN_MIN, UFO_SPAWN_MAX);
@@ -1899,6 +2069,9 @@ function hurtShip() {
   }
 
   if (!bossDebug) lives -= 1;
+  scoreMultiplier = 1;
+  chainTimer = 0;
+  syncScoreLabel();
   createShipDebris();
   shipBreakActive = true;
   shipBreakTimer = 0;
@@ -2199,10 +2372,19 @@ function spawnRocks(count) {
       y = rand(margin, H - margin);
     } while (distance(x, y, ship.x, ship.y) < 150);
     const rock = createRock(x, y, "large");
-    const roll = Math.random();
-    if (roll < CLUSTER2_SPAWN_CHANCE) rock.hidesCluster2 = true;
-    else rock.hidesCluster = roll < CLUSTER2_SPAWN_CHANCE + CLUSTER_SPAWN_CHANCE;
-    for (const wave of bombWaves) wave.hitSet.add(rock);
+    if (wave <= 1 || wave === 4) {
+      rock.hidesCluster = false;
+      rock.hidesCluster2 = false;
+    } else if (wave === 2 && i === 0) {
+      rock.hidesCluster = true;
+    } else if (wave === 3 && i === 0) {
+      rock.hidesCluster2 = true;
+    } else if (wave >= 5) {
+      const roll = Math.random();
+      if (roll < CLUSTER2_SPAWN_CHANCE) rock.hidesCluster2 = true;
+      else rock.hidesCluster = roll < CLUSTER2_SPAWN_CHANCE + CLUSTER_SPAWN_CHANCE;
+    }
+    for (const blast of bombWaves) blast.hitSet.add(rock);
     rocks.push(rock);
   }
 }
@@ -2231,8 +2413,10 @@ function beginWaveIntro(title, sub, spawnKind) {
 function releasePendingWave() {
   const kind = pendingWaveEnemies;
   pendingWaveEnemies = null;
-  if (kind === "rocks") spawnRocks(rockCount);
-  else if (kind === "boss") spawnBoss();
+  if (kind === "rocks") {
+    spawnRocks(rockCount);
+    if (wave === 4 && ufos.length === 0) spawnUfo();
+  } else if (kind === "boss") spawnBoss();
   else if (kind === "afterBoss") spawnNextWave();
 }
 
@@ -2241,8 +2425,7 @@ function spawnNextWave() {
   const clearedBossWave = wave % 5 === 0 && !boss;
   awardWaveClear();
   if (clearedBossWave) {
-    rockCount += 2;
-    rockSpeedBonus = Math.min(0.4, rockSpeedBonus + 0.05);
+    rockSpeedBonus = Math.min(0.4, rockSpeedBonus + 0.02);
   }
   wave += 1;
   rockCount += 1;
@@ -2278,7 +2461,17 @@ function resetArcadeRun(showBanner) {
   boss = null;
   bossPulses = [];
   bossBullets = [];
+  stopBossMusic();
   rockSpeedBonus = 0;
+  scoreMultiplier = 1;
+  chainTimer = 0;
+  nextLifeAt = LIFE_SCORE_STEP;
+  lifeScoreGap = LIFE_SCORE_STEP;
+  newBestShown = false;
+  bestScore = scoreValue(highScores[0]) || 0;
+  hitStopTimer = 0;
+  lastLifePulse = 0;
+  syncScoreLabel();
   rapidTimer = 0;
   tripleTimer = 0;
   slowTimer = 0;
@@ -2362,6 +2555,7 @@ function spawnUfo(force = false) {
 }
 
 function updateUfoSpawning(dt) {
+  if (wave < 5) return;
   if (ufos.length >= maxUfos()) return;
   ufoSpawnTimer += dt;
   if (ufoSpawnTimer >= ufoNextSpawn) {
@@ -2483,9 +2677,10 @@ function updateUfos(dt) {
   resolveUfoRockCollisions();
 }
 
-function destroyUfo(index) {
+function destroyUfo(index, chain) {
   const ufo = ufos[index];
-  addScore(UFO_SCORE, ufo.x, ufo.y);
+  if (chain) addChainScore(UFO_SCORE, ufo.x, ufo.y);
+  else addScore(UFO_SCORE, ufo.x, ufo.y);
   addExplosionParticles(ufo.x, ufo.y, 22, "#33ff66");
   addDestroyBurst(ufo.x, ufo.y, "#33ff66", 1.6);
   playUfoDestroyedSound();
@@ -2813,9 +3008,9 @@ function clusterOuterRing(cluster) {
 
 function clusterSpeed(cluster) {
   const ring = clusterOuterRing(cluster);
-  if (ring >= 2) return 0.85;
-  if (ring === 1) return 1.2;
-  return 1.55;
+  if (ring >= 2) return 1.2;
+  if (ring === 1) return 1.7;
+  return 2.2;
 }
 
 function circleWorldPos(cluster, circle) {
@@ -2826,14 +3021,15 @@ function circleWorldPos(cluster, circle) {
   };
 }
 
-function popClusterCircle(cluster, circleIndex, clusterIndex) {
+function popClusterCircle(cluster, circleIndex, clusterIndex, chain) {
   const circle = cluster.circles[circleIndex];
   const pos = circleWorldPos(cluster, circle);
   const last = cluster.circles.length === 1;
   cluster.circles.splice(circleIndex, 1);
   addSplashBurst(pos.x, pos.y, CLUSTER_CIRCLE_R * 1.4, last ? 26 : 14, "#ff3333");
   if (last) {
-    addScore(CLUSTER_CLEAR_SCORE, cluster.x, cluster.y);
+    if (chain) addChainScore(CLUSTER_CLEAR_SCORE, cluster.x, cluster.y);
+    else addScore(CLUSTER_CLEAR_SCORE, cluster.x, cluster.y);
     playClusterClearSound();
     screenShake = 8;
     clusters.splice(clusterIndex, 1);
@@ -2841,7 +3037,8 @@ function popClusterCircle(cluster, circleIndex, clusterIndex) {
     let reach = 0;
     for (const remain of cluster.circles) reach = Math.max(reach, remain.r);
     cluster.radius = reach + CLUSTER_CIRCLE_R;
-    addScore(CLUSTER_POP_SCORE, cluster.x, cluster.y);
+    if (chain) addChainScore(CLUSTER_POP_SCORE, cluster.x, cluster.y);
+    else addScore(CLUSTER_POP_SCORE, cluster.x, cluster.y);
     playClusterPopSound();
   }
 }
@@ -2886,7 +3083,7 @@ function bulletHitsCluster(bullet) {
     const crossedBody = pointSegmentDistance(cluster.x, cluster.y, x1, y1, x2, y2) <= cluster.radius + 4;
     const hitCircle = bestIndex >= 0 && bestDist <= CLUSTER_CIRCLE_R + 8;
     if ((hitCircle || crossedBody) && bestIndex >= 0) {
-      popClusterCircle(cluster, bestIndex, i);
+      popClusterCircle(cluster, bestIndex, i, true);
       return true;
     }
   }
@@ -2899,7 +3096,7 @@ function bulletHitsSeeker(bullet) {
   for (let i = clusterSeekers.length - 1; i >= 0; i--) {
     const seeker = clusterSeekers[i];
     if (pointSegmentDistance(seeker.x, seeker.y, x1, y1, bullet.x, bullet.y) > seeker.radius + 8) continue;
-    popClusterSeeker(i);
+    popClusterSeeker(i, true);
     return true;
   }
   return false;
@@ -3012,6 +3209,7 @@ function updateClusterSeekers(dt) {
     seeker.x += (seeker.vx + seeker.pushX) * ts;
     seeker.y += (seeker.vy + seeker.pushY) * ts;
     wrapPosition(seeker);
+    keepSeekerOffShip(seeker);
     seeker.smoke += dt;
     if (seeker.smoke >= 0.05) {
       seeker.smoke = 0;
@@ -3020,11 +3218,12 @@ function updateClusterSeekers(dt) {
   }
 }
 
-function popClusterSeeker(index) {
+function popClusterSeeker(index, chain) {
   const seeker = clusterSeekers[index];
   if (!seeker) return;
   addSplashBurst(seeker.x, seeker.y, CLUSTER_CIRCLE_R * 1.4, 12, "#ff3333");
-  addScore(CLUSTER_POP_SCORE, seeker.x, seeker.y);
+  if (chain) addChainScore(CLUSTER_POP_SCORE, seeker.x, seeker.y);
+  else addScore(CLUSTER_POP_SCORE, seeker.x, seeker.y);
   playClusterPopSound();
   clusterSeekers.splice(index, 1);
 }
@@ -3213,6 +3412,7 @@ function spawnBoss() {
   bossPulses = [];
   bossBullets = [];
   syncStageLabel();
+  startBossMusic();
 }
 
 function bossCoreAlive() {
@@ -3312,9 +3512,19 @@ function beginBossCollapse() {
   boss.tremorX = 0;
   boss.tremorY = 0;
   playBossDeathSound();
+  fadeBossMusic();
 }
 
-function popBossCircle(circle) {
+function keepSeekerOffShip(seeker) {
+  const minDist = seeker.radius + ship.radius + 10;
+  if (distance(seeker.x, seeker.y, ship.x, ship.y) >= minDist) return;
+  const vx = seeker.vx + seeker.pushX;
+  const vy = seeker.vy + seeker.pushY;
+  if (Math.abs(vx) >= Math.abs(vy)) seeker.x = vx >= 0 ? -seeker.radius : W + seeker.radius;
+  else seeker.y = vy >= 0 ? -seeker.radius : H + seeker.radius;
+}
+
+function popBossCircle(circle, chain) {
   if (!boss || !circle.alive) return;
   const collapsing = boss.phase === "collapse";
   const pos = circleWorldPos(boss, circle);
@@ -3324,7 +3534,9 @@ function popBossCircle(circle) {
   circle.charging = false;
   addSplashBurst(pos.x, pos.y, CLUSTER_CIRCLE_R * 1.3, circle.core ? 14 : 8, "#ff3333");
   if (!collapsing) {
-    addScore(circle.core ? 40 : 20, pos.x, pos.y);
+    const points = circle.core ? 40 : 20;
+    if (chain) addChainScore(points, pos.x, pos.y);
+    else addScore(points, pos.x, pos.y);
     playClusterPopSound();
     dropBossPickup(pos.x, pos.y);
   } else {
@@ -3664,7 +3876,7 @@ function bulletHitsBoss(bullet) {
   }
 
   if (!best) return false;
-  popBossCircle(best);
+  popBossCircle(best, true);
   return true;
 }
 
@@ -3945,7 +4157,8 @@ function drawLives() {
   const top = scoreBox.y + scoreBox.h - canvasBox.y + 6;
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 1.5 * toY;
-  for (let i = 0; i < lives; i++) {
+  const shown = Math.min(lives, MAX_LIVES);
+  for (let i = 0; i < shown; i++) {
     const x = (left + i * (iconW + gap) + iconW / 2) * toX;
     const y = (top + iconH / 2) * toY;
     const hw = (iconW / 2) * toX;
@@ -3956,6 +4169,15 @@ function drawLives() {
     ctx.lineTo(x + hw, y + hh);
     ctx.closePath();
     ctx.stroke();
+  }
+  if (lives >= MAX_LIVES) {
+    const x = (left + shown * (iconW + gap)) * toX;
+    const y = (top + iconH / 2) * toY;
+    ctx.fillStyle = "#fff";
+    ctx.font = Math.max(8, iconH * 0.55 * toY) + "px Courier New";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("max", x, y);
   }
 }
 
@@ -3980,6 +4202,7 @@ function startBossTest(which) {
   boss = null;
   bossPulses = [];
   bossBullets = [];
+  stopBossMusic();
   wave = waveNumber;
   shockwaveUsedThisWave = false;
   bossDebug = true;
@@ -4310,36 +4533,9 @@ function updateShip(dt) {
 
   if (inputMode === "mobile") {
     thrusting = updateMobileShip(dt);
-  } else if (mouse.tracking) {
-    thrusting = updateDesktopMouseShip(dt);
-
-    if (keys.KeyS) {
-      ship.vx -= Math.cos(ship.angle) * ship.reversePower * ts;
-      ship.vy -= Math.sin(ship.angle) * ship.reversePower * ts;
-      thrusting = true;
-    }
-
-    if (keys.KeyW) {
-      ship.vx += Math.cos(ship.angle) * shipThrustPower() * ts;
-      ship.vy += Math.sin(ship.angle) * shipThrustPower() * ts;
-      thrusting = true;
-      startThrustSound();
-    }
   } else {
-    if (keys.KeyA) ship.angle -= ship.rotateSpeed * ts;
-    if (keys.KeyD) ship.angle += ship.rotateSpeed * ts;
-
-    if (keys.KeyW) {
-      ship.vx += Math.cos(ship.angle) * shipThrustPower() * ts;
-      ship.vy += Math.sin(ship.angle) * shipThrustPower() * ts;
-      thrusting = true;
-    }
-
-    if (keys.KeyS) {
-      ship.vx -= Math.cos(ship.angle) * ship.reversePower * ts;
-      ship.vy -= Math.sin(ship.angle) * ship.reversePower * ts;
-      thrusting = true;
-    }
+    updateDesktopMouseShip(dt);
+    thrusting = applyDesktopMoveKeys(ts);
   }
 
   // Light friction keeps drift manageable
@@ -4360,9 +4556,7 @@ function updateShip(dt) {
 
   // Smoke trail — intensity scales with thrust strength and speed
   if (thrusting) {
-    const thrustIntensity = inputMode === "mobile"
-      ? joystick.power
-      : (mouse.tracking ? mouse.power : 1);
+    const thrustIntensity = inputMode === "mobile" ? joystick.power : 1;
     const speedRatio = speed / shipMaxSpeed();
     const spawnChance = (0.3 + speedRatio * 0.7) * thrustIntensity * ts;
     const spawnCount = speedRatio > 0.5 ? 2 : 1;
@@ -4595,8 +4789,9 @@ function clearSpawnFromShip(obj) {
   wrapPosition(obj);
 }
 
-function breakRock(rock, index) {
-  addScore(rock.score, rock.x, rock.y);
+function breakRock(rock, index, chain) {
+  if (chain) addChainScore(rock.score, rock.x, rock.y);
+  else addScore(rock.score, rock.x, rock.y);
 
   const x = rock.x;
   const y = rock.y;
@@ -4651,6 +4846,38 @@ function breakRock(rock, index) {
   rocks.splice(index, 1);
 }
 
+function markNearMiss(obj, x, y, touchDist) {
+  if (!shipCanBeHit() || obj.nearMissed) return;
+  const dist = distance(ship.x, ship.y, x, y);
+  if (dist < touchDist || dist > touchDist + NEAR_MISS_BAND) return;
+  obj.nearMissed = true;
+  addScore(NEAR_MISS_SCORE, ship.x, ship.y - 14, "CLOSE");
+  hitFlash = Math.max(hitFlash, 0.35);
+}
+
+function updateNearMisses() {
+  if (!shipCanBeHit()) return;
+  for (const rock of rocks) {
+    markNearMiss(rock, rock.x, rock.y, rock.radius + ship.radius - 4);
+  }
+  for (const ufo of ufos) {
+    markNearMiss(ufo, ufo.x, ufo.y, ufo.radius + ship.radius - 4);
+  }
+  for (const seeker of clusterSeekers) {
+    markNearMiss(seeker, seeker.x, seeker.y, seeker.radius + ship.radius - 2);
+  }
+  for (const shot of bossBullets) {
+    markNearMiss(shot, shot.x, shot.y, shot.radius + ship.radius - 2);
+  }
+  for (const cluster of clusters) {
+    if (cluster.grace > 0) continue;
+    for (const circle of cluster.circles) {
+      const pos = circleWorldPos(cluster, circle);
+      markNearMiss(circle, pos.x, pos.y, CLUSTER_CIRCLE_R + ship.radius - 2);
+    }
+  }
+}
+
 function checkCollisions() {
   // Bullet vs rock
   for (let i = bullets.length - 1; i >= 0; i--) {
@@ -4661,7 +4888,7 @@ function checkCollisions() {
       const rock = rocks[j];
       if (distance(b.x, b.y, rock.x, rock.y) < rock.radius) {
         bullets.splice(i, 1);
-        breakRock(rock, j);
+        breakRock(rock, j, true);
         hit = true;
         break;
       }
@@ -4688,13 +4915,14 @@ function checkCollisions() {
       const ufo = ufos[k];
       if (distance(b.x, b.y, ufo.x, ufo.y) < ufo.radius) {
         bullets.splice(i, 1);
-        destroyUfo(k);
+        destroyUfo(k, true);
         break;
       }
     }
   }
 
   collectPickup();
+  updateNearMisses();
 
   if (gameOver || shipBreakActive || waitingToStart) return;
 
@@ -5011,6 +5239,14 @@ function draw() {
     drawScorePopups();
     drawWaveBanner();
     drawHitFlash();
+    if (lives === 1 && !shipBreakActive) {
+      const pulse = 0.08 + Math.abs(Math.sin(performance.now() * 0.006)) * 0.08;
+      const edge = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+      edge.addColorStop(0, "rgba(0,0,0,0)");
+      edge.addColorStop(1, "rgba(120,0,0," + pulse.toFixed(3) + ")");
+      ctx.fillStyle = edge;
+      ctx.fillRect(-10, -10, W + 20, H + 20);
+    }
   } else {
     drawGameOver();
     drawShipDebris();
@@ -5026,8 +5262,28 @@ function update(currentTime) {
   lastFrameTime = currentTime;
   updateStars(dt);
   scheduleTitleMusic();
+  scheduleBossMusic();
 
-  if (!waitingToStart && !gameOver) {
+  if (!waitingToStart && !gameOver && hitStopTimer > 0) {
+    hitStopTimer = Math.max(0, hitStopTimer - dt);
+  } else if (!waitingToStart && !gameOver) {
+    if (chainTimer > 0) {
+      chainTimer -= dt;
+      if (chainTimer <= 0) {
+        chainTimer = 0;
+        if (scoreMultiplier !== 1) {
+          scoreMultiplier = 1;
+          syncScoreLabel();
+        }
+      }
+    }
+    if (lives === 1 && !shipBreakActive) {
+      lastLifePulse -= dt;
+      if (lastLifePulse <= 0) {
+        lastLifePulse = 0.85;
+        playTone(92, 0.08, 0.05, "sine");
+      }
+    }
     if (!shipBreakActive) updateShip(dt);
     updateRocks(dt);
     updateUfos(dt);
